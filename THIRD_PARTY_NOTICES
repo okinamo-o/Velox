@@ -1,0 +1,49 @@
+THIRD-PARTY SOFTWARE NOTICES AND INFORMATION
+========================================================================
+
+VELOX incorporates components from open-source projects governed by separate 
+licenses. The corresponding copyright notices and licenses are listed below 
+and in the accompanying /LICENSES/ directory.
+
+1. Chromium Project
+   URL: https://www.chromium.org/
+   License: BSD 3-Clause License (see /LICENSES/LICENSE.chromium)
+   Copyright 2026 The Chromium Authors. All rights reserved.
+
+2. Blink Rendering Engine
+   URL: https://chromium.googlesource.com/chromium/blink
+   License: BSD 3-Clause / LGPL v2.1+ / MIT
+
+3. V8 JavaScript & WebAssembly Engine
+   URL: https://v8.dev/
+   License: BSD 3-Clause License
+
+4. BoringSSL / OpenSSL
+   URL: https://boringssl.googlesource.com/boringssl/
+   License: OpenSSL / ISC / BSD 2-Clause
+
+5. Skia 2D Graphics Engine
+   URL: https://skia.org/
+   License: BSD 3-Clause License
+
+6. ANGLE (Almost Native Graphics Layer Engine)
+   URL: https://angleproject.org/
+   License: BSD 3-Clause License
+
+7. ICU (International Components for Unicode)
+   URL: https://icu.unicode.org/
+   License: Unicode-TOU License
+
+8. WebRTC
+   URL: https://webrtc.org/
+   License: BSD 3-Clause License
+
+9. libxml2 & libxslt
+   URL: http://xmlsoft.org/
+   License: MIT License
+
+10. libjpeg-turbo & libpng & zlib
+    License: Custom permissive BSD / zlib licenses
+
+For detailed license terms and full source trees of third-party libraries, 
+refer to the upstream third_party/ directory in the Chromium checkout.

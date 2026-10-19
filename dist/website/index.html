@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Velox Browser — The Ultra-Fast, Shielded Web Browser</title>
+  <meta name="description" content="Experience the web at lightning speed. Velox is a next-generation browser powered by custom-tuned Blink, built-in Velox Shield ad blocking, and Opera One tab islands.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-dark: #0a0c10;
+      --bg-card: rgba(18, 22, 34, 0.75);
+      --bg-card-border: rgba(255, 255, 255, 0.08);
+      --accent-cyan: #00f0ff;
+      --accent-purple: #a855f7;
+      --accent-emerald: #10b981;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --gradient-brand: linear-gradient(135deg, #00f0ff 0%, #a855f7 100%);
+      --glow-cyan: 0 0 35px rgba(0, 240, 255, 0.35);
+      --glow-purple: 0 0 35px rgba(168, 85, 247, 0.35);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-dark);
+      color: var(--text-main);
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      overflow-x: hidden;
+      line-height: 1.6;
+    }
+
+    /* Background Ambient Gradients */
+    .ambient-glow {
+      position: fixed;
+      top: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 100vw;
+      height: 100vh;
+      pointer-events: none;
+      z-index: 0;
+      background: radial-gradient(circle at 50% 15%, rgba(0, 240, 255, 0.12) 0%, rgba(168, 85, 247, 0.08) 35%, transparent 70%);
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 24px;
+      position: relative;
+      z-index: 1;
+    }
+
+    /* Navbar */
+    header {
+      padding: 24px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      backdrop-filter: blur(12px);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(10, 12, 16, 0.85);
+    }
+
+    nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .logo-badge {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      text-decoration: none;
+      color: var(--text-main);
+      font-weight: 800;
+      font-size: 1.4rem;
+      letter-spacing: -0.5px;
+    }
+
+    .logo-icon {
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      background: var(--gradient-brand);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.2rem;
+      box-shadow: var(--glow-cyan);
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 32px;
+      align-items: center;
+    }
+
+    .nav-link {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.95rem;
+      font-weight: 500;
+      transition: color 0.2s ease;
+    }
+
+    .nav-link:hover {
+      color: var(--accent-cyan);
+    }
+
+    /* Hero Section */
+    .hero {
+      padding: 100px 0 80px;
+      text-align: center;
+    }
+
+    .tag-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 16px;
+      border-radius: 9999px;
+      background: rgba(0, 240, 255, 0.08);
+      border: 1px solid rgba(0, 240, 255, 0.25);
+      color: var(--accent-cyan);
+      font-size: 0.85rem;
+      font-weight: 600;
+      margin-bottom: 28px;
+    }
+
+    .tag-pulse {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent-cyan);
+      box-shadow: 0 0 8px var(--accent-cyan);
+    }
+
+    h1 {
+      font-size: 4rem;
+      font-weight: 800;
+      line-height: 1.1;
+      letter-spacing: -1.5px;
+      margin-bottom: 24px;
+    }
+
+    .gradient-text {
+      background: var(--gradient-brand);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .hero-subtitle {
+      font-size: 1.25rem;
+      color: var(--text-muted);
+      max-width: 680px;
+      margin: 0 auto 40px;
+      font-weight: 400;
+    }
+
+    .cta-group {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .btn-download {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--gradient-brand);
+      color: #05070a;
+      padding: 16px 36px;
+      border-radius: 12px;
+      font-size: 1.1rem;
+      font-weight: 700;
+      text-decoration: none;
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      box-shadow: var(--glow-cyan);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+    }
+
+    .btn-download:hover {
+      transform: translateY(-2px) scale(1.02);
+      box-shadow: 0 10px 40px rgba(0, 240, 255, 0.5);
+    }
+
+    .download-meta {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+
+    .download-meta a {
+      color: var(--accent-cyan);
+      text-decoration: none;
+    }
+
+    .download-meta a:hover {
+      text-decoration: underline;
+    }
+
+    /* Browser Mockup Preview */
+    .preview-wrapper {
+      margin: 60px auto 0;
+      max-width: 1040px;
+      border-radius: 18px;
+      padding: 6px;
+      background: linear-gradient(135deg, rgba(0, 240, 255, 0.35), rgba(168, 85, 247, 0.35));
+      box-shadow: 0 30px 80px rgba(0, 0, 0, 0.8);
+    }
+
+    .browser-frame {
+      background: #0f131a;
+      border-radius: 14px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .browser-header-mockup {
+      display: flex;
+      align-items: center;
+      padding: 12px 18px;
+      background: #141923;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      gap: 12px;
+    }
+
+    .mockup-controls {
+      display: flex;
+      gap: 8px;
+    }
+
+    .mockup-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+    }
+
+    .dot-close { background: #ff5f56; }
+    .dot-min { background: #ffbd2e; }
+    .dot-max { background: #27c93f; }
+
+    .mockup-omnibox {
+      flex: 1;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 8px;
+      padding: 6px 14px;
+      font-size: 0.85rem;
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .shield-badge {
+      color: var(--accent-cyan);
+      font-weight: 600;
+    }
+
+    .mockup-body {
+      height: 440px;
+      background: linear-gradient(180deg, #11151f 0%, #0a0c10 100%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 40px;
+      text-align: center;
+    }
+
+    /* Features Grid */
+    .features {
+      padding: 100px 0;
+    }
+
+    .section-title {
+      text-align: center;
+      font-size: 2.5rem;
+      font-weight: 800;
+      margin-bottom: 60px;
+      letter-spacing: -0.8px;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 28px;
+    }
+
+    .feature-card {
+      background: var(--bg-card);
+      border: 1px solid var(--bg-card-border);
+      border-radius: 16px;
+      padding: 36px 28px;
+      transition: all 0.3s ease;
+      backdrop-filter: blur(8px);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .feature-card:hover {
+      border-color: rgba(0, 240, 255, 0.3);
+      transform: translateY(-4px);
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4);
+    }
+
+    .feature-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 12px;
+      background: rgba(0, 240, 255, 0.1);
+      border: 1px solid rgba(0, 240, 255, 0.2);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.4rem;
+      margin-bottom: 20px;
+      color: var(--accent-cyan);
+    }
+
+    .feature-card h3 {
+      font-size: 1.35rem;
+      font-weight: 700;
+      margin-bottom: 12px;
+    }
+
+    .feature-card p {
+      color: var(--text-muted);
+      font-size: 0.95rem;
+    }
+
+    /* Comparison Table */
+    .benchmark-section {
+      padding: 80px 0;
+      background: rgba(14, 18, 27, 0.6);
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .table-wrapper {
+      max-width: 860px;
+      margin: 0 auto;
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+    }
+
+    th, td {
+      padding: 18px 24px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    th {
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--text-muted);
+    }
+
+    td {
+      font-size: 1.05rem;
+      font-weight: 500;
+    }
+
+    .highlight-cell {
+      color: var(--accent-cyan);
+      font-weight: 700;
+    }
+
+    /* Footer */
+    footer {
+      padding: 60px 0 30px;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    footer p {
+      margin-bottom: 12px;
+    }
+
+    @media (max-width: 768px) {
+      h1 { font-size: 2.75rem; }
+      .nav-links { display: none; }
+      .mockup-body { height: 280px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="ambient-glow"></div>
+
+  <header>
+    <div class="container">
+      <nav>
+        <a href="#" class="logo-badge">
+          <div class="logo-icon">⚡</div>
+          <span>VELOX</span>
+        </a>
+        <div class="nav-links">
+          <a href="#features" class="nav-link">Features</a>
+          <a href="#benchmarks" class="nav-link">Performance</a>
+          <a href="https://github.com/Louay/velox" target="_blank" class="nav-link">GitHub</a>
+          <a href="#download" class="nav-link" style="color: var(--accent-cyan); font-weight: 700;">Download</a>
+        </div>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <!-- Hero Section -->
+    <section class="hero" id="download">
+      <div class="container">
+        <div class="tag-pill">
+          <span class="tag-pulse"></span>
+          <span>Version 134.0 Ultra is Live</span>
+        </div>
+        <h1>The Web at <span class="gradient-text">Ludicrous Speed.</span></h1>
+        <p class="hero-subtitle">
+          Velox redefines what a desktop browser should be: native hardware acceleration, integrated ad and tracker blocking, Opera One-style Tab Islands, and zero background baggage.
+        </p>
+
+        <div class="cta-group">
+          <a href="VeloxSetup.exe" download="VeloxSetup.exe" class="btn-download">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="7 10 12 15 17 10"></polyline>
+              <line x1="12" y1="15" x2="12" y2="3"></line>
+            </svg>
+            <span>Download for Windows (64-bit)</span>
+          </a>
+          <div class="download-meta">
+            <span>Free & Open Source • Windows 10/11 • </span>
+            <a href="Velox-v134.0.6998.178-Portable-x64.zip" download>Download Portable ZIP</a>
+          </div>
+        </div>
+
+        <!-- Visual Preview Frame -->
+        <div class="preview-wrapper">
+          <div class="browser-frame">
+            <div class="browser-header-mockup">
+              <div class="mockup-controls">
+                <div class="mockup-dot dot-close"></div>
+                <div class="mockup-dot dot-min"></div>
+                <div class="mockup-dot dot-max"></div>
+              </div>
+              <div class="mockup-omnibox">
+                <span class="shield-badge">🛡️ Velox Shield Active</span>
+                <span>https://veloxbrowser.com</span>
+              </div>
+            </div>
+            <div class="mockup-body">
+              <h2 style="font-size: 2.2rem; margin-bottom: 16px; font-weight: 800;">Zero Bloat. Infinite Clarity.</h2>
+              <p style="color: var(--text-muted); max-width: 480px; font-size: 1.05rem;">
+                Crafted for creators, developers, and power users who demand immediate response times and uninterrupted focus.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Features -->
+    <section class="features" id="features">
+      <div class="container">
+        <h2 class="section-title">Engineered to Outperform</h2>
+        <div class="grid-3">
+          <div class="feature-card">
+            <div class="feature-icon">🛡️</div>
+            <h3>Velox Shield Engine</h3>
+            <p>
+              Integrated content filtering baked directly into the network stack. Blocks ads, popups, cryptominers, and cross-site tracking scripts before they even hit the DOM.
+            </p>
+          </div>
+
+          <div class="feature-card">
+            <div class="feature-icon">🏝️</div>
+            <h3>Smart Tab Islands</h3>
+            <p>
+              Tabs group automatically into color-coded context islands. Collapse research clusters with one click and glide smoothly across projects without tab clutter.
+            </p>
+          </div>
+
+          <div class="feature-card">
+            <div class="feature-icon">⚡</div>
+            <h3>Hardware Pushed to Max</h3>
+            <p>
+              Custom-tuned GPU rasterization and WebGL shader pipelines deliver buttery 144Hz+ rendering with significantly reduced CPU overhead.
+            </p>
+          </div>
+
+          <div class="feature-card">
+            <div class="feature-icon">🔒</div>
+            <h3>Zero Hidden Apps</h3>
+            <p>
+              When you close Velox, it actually exits. No lingering system tray apps, no persistent background telemetry workers, and no memory leaks.
+            </p>
+          </div>
+
+          <div class="feature-card">
+            <div class="feature-icon">🎨</div>
+            <h3>Futuristic Glow UI</h3>
+            <p>
+              Designed with glassmorphic depth, ambient neon hover accents, and custom Windows non-client frame integration for an immaculate visual presence.
+            </p>
+          </div>
+
+          <div class="feature-card">
+            <div class="feature-icon">🔔</div>
+            <h3>Seamless Updates</h3>
+            <p>
+              Non-intrusive update signals appear in your toolbar only when an actual update is ready. Click once, relaunch, and resume right where you left off.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Benchmarks -->
+    <section class="benchmark-section" id="benchmarks">
+      <div class="container">
+        <h2 class="section-title" style="margin-bottom: 40px;">How Velox Compares</h2>
+        <div class="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>Feature / Metric</th>
+                <th style="color: var(--accent-cyan);">Velox Browser</th>
+                <th>Standard Chrome</th>
+                <th>Edge</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Built-in Ad & Tracker Block</td>
+                <td class="highlight-cell">Native Shield (0ms overhead)</td>
+                <td>None (Requires Extensions)</td>
+                <td>Basic</td>
+              </tr>
+              <tr>
+                <td>Opera One Tab Islands</td>
+                <td class="highlight-cell">Integrated with Glow</td>
+                <td>Basic Tab Groups</td>
+                <td>Vertical Tabs Only</td>
+              </tr>
+              <tr>
+                <td>Hidden Background Mode</td>
+                <td class="highlight-cell">Completely Disabled</td>
+                <td>Always Active</td>
+                <td>Active (Startup Boost)</td>
+              </tr>
+              <tr>
+                <td>Startup Latency</td>
+                <td class="highlight-cell">&lt; 350 ms</td>
+                <td>~900 ms</td>
+                <td>~750 ms</td>
+              </tr>
+              <tr>
+                <td>Telemetry Collection</td>
+                <td class="highlight-cell">Zero</td>
+                <td>Extensive</td>
+                <td>Extensive</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="container">
+      <p>Velox Browser is licensed under the BSD Open Source License.</p>
+      <p style="font-size: 0.8rem; color: #64748b;">Chromium is a trademark of Google LLC. Velox is an independent open-source project.</p>
+    </div>
+  </footer>
+</body>
+</html>

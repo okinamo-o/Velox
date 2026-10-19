@@ -1,0 +1,58 @@
+diff --git a/chrome/browser/resource_coordinator/tab_lifecycle_unit.cc b/chrome/browser/resource_coordinator/tab_lifecycle_unit.cc
+index 30ed31dde8..93d9f78d51 100644
+--- a/chrome/browser/resource_coordinator/tab_lifecycle_unit.cc
++++ b/chrome/browser/resource_coordinator/tab_lifecycle_unit.cc
+@@ -16,6 +16,8 @@
+ #include "base/process/process_metrics.h"
+ #include "build/chromeos_buildflags.h"
+ #include "chrome/browser/devtools/devtools_window.h"
++#include "chrome/browser/download/download_core_service.h"
++#include "chrome/browser/download/download_core_service_factory.h"
+ #include "chrome/browser/media/webrtc/media_capture_devices_dispatcher.h"
+ #include "chrome/browser/media/webrtc/media_stream_capture_indicator.h"
+ #include "chrome/browser/performance_manager/public/user_tuning/user_performance_tuning_manager.h"
+@@ -38,7 +40,10 @@
+ #include "chrome/browser/web_applications/web_app_tab_helper.h"
+ #include "components/device_event_log/device_event_log.h"
+ #include "components/performance_manager/public/decorators/page_live_state_decorator.h"
++#include "components/download/public/common/download_item.h"
+ #include "components/permissions/permission_manager.h"
++#include "content/public/browser/download_item_utils.h"
++#include "content/public/browser/download_manager.h"
+ #include "content/public/browser/navigation_controller.h"
+ #include "content/public/browser/navigation_entry.h"
+ #include "content/public/browser/render_frame_host.h"
+@@ -268,6 +273,33 @@ bool TabLifecycleUnitSource::TabLifecycleUnit::CanDiscard(
+     return false;
+   }
+ 
++  // VELOX Heuristics (Directive Section 13):
++  // 1. Never discard or throttle pinned tabs.
++  const int tab_index = tab_strip_model_->GetIndexOfWebContents(web_contents());
++  if (tab_index != TabStripModel::kNoTab && tab_strip_model_->IsTabPinned(tab_index)) {
++    return false;
++  }
++
++  // 2. Never discard tabs with active in-progress downloads.
++  if (content::BrowserContext* browser_context = web_contents()->GetBrowserContext()) {
++    DownloadCoreService* download_core_service =
++        DownloadCoreServiceFactory::GetForBrowserContext(browser_context);
++    if (download_core_service && download_core_service->HasCreatedDownloadManager()) {
++      if (content::DownloadManager* download_manager = browser_context->GetDownloadManager()) {
++        content::DownloadManager::DownloadVector downloads;
++        download_manager->GetAllDownloads(&downloads);
++        for (download::DownloadItem* item : downloads) {
++          if (item && item->GetState() == download::DownloadItem::IN_PROGRESS) {
++            if (content::DownloadItemUtils::GetWebContents(item) == web_contents() ||
++                content::DownloadItemUtils::GetOriginalWebContents(item) == web_contents()) {
++              return false;
++            }
++          }
++        }
++      }
++    }
++  }
++
+ // Fix for urgent discarding woes in crbug.com/883071. These protections only
+ // apply on non-ChromeOS desktop platforms (Linux, Mac, Win).
+ // NOTE: These do not currently provide DecisionDetails!

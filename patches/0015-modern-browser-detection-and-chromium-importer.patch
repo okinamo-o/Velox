@@ -1,0 +1,371 @@
+diff --git a/chrome/browser/importer/importer_list.cc b/chrome/browser/importer/importer_list.cc
+index 5898c273ff..07fd268401 100644
+--- a/chrome/browser/importer/importer_list.cc
++++ b/chrome/browser/importer/importer_list.cc
+@@ -24,12 +24,132 @@
+ #endif
+ 
+ #if BUILDFLAG(IS_WIN)
++#include <windows.h>
++#include <shlwapi.h>
++#include "base/base_paths.h"
++#include "base/files/file_util.h"
++#include "base/path_service.h"
++#include "base/strings/utf_string_conversions.h"
+ #include "chrome/common/importer/edge_importer_utils_win.h"
+ #endif
+ 
+ namespace {
+ 
+ #if BUILDFLAG(IS_WIN)
++std::wstring GetSystemDefaultBrowserName() {
++  wchar_t buffer[256] = {0};
++  DWORD size = std::size(buffer);
++  HRESULT hr = AssocQueryStringW(ASSOCF_IS_PROTOCOL, ASSOCSTR_FRIENDLYAPPNAME,
++                                 L"https", nullptr, buffer, &size);
++  if (SUCCEEDED(hr) && buffer[0] != L'\0') {
++    return std::wstring(buffer);
++  }
++  return std::wstring();
++}
++
++void DetectInstalledBrowsersWin(std::vector<importer::SourceProfile>* profiles) {
++  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
++                                                base::BlockingType::MAY_BLOCK);
++
++  base::FilePath local_app_data;
++  base::PathService::Get(base::DIR_LOCAL_APP_DATA, &local_app_data);
++  base::FilePath app_data;
++  base::PathService::Get(base::DIR_ROAMING_APP_DATA, &app_data);
++
++  std::wstring default_browser_name = GetSystemDefaultBrowserName();
++
++  struct BrowserCandidate {
++    const wchar_t* display_name;
++    base::FilePath profile_path;
++  };
++
++  std::vector<BrowserCandidate> candidates;
++
++  if (!local_app_data.empty()) {
++    candidates.push_back({
++        L"Google Chrome",
++        local_app_data.Append(L"Google\\Chrome\\User Data\\Default")
++    });
++    candidates.push_back({
++        L"Microsoft Edge",
++        local_app_data.Append(L"Microsoft\\Edge\\User Data\\Default")
++    });
++    candidates.push_back({
++        L"Brave Browser",
++        local_app_data.Append(L"BraveSoftware\\Brave-Browser\\User Data\\Default")
++    });
++    candidates.push_back({
++        L"Comet",
++        local_app_data.Append(L"Perplexity\\Comet\\User Data\\Default")
++    });
++    candidates.push_back({
++        L"Vivaldi",
++        local_app_data.Append(L"Vivaldi\\User Data\\Default")
++    });
++  }
++
++  if (!app_data.empty()) {
++    candidates.push_back({
++        L"Opera",
++        app_data.Append(L"Opera Software\\Opera Stable")
++    });
++  }
++
++  std::vector<importer::SourceProfile> detected_browsers;
++
++  for (const auto& candidate : candidates) {
++    if (base::PathExists(candidate.profile_path)) {
++      importer::SourceProfile sp;
++      std::wstring name_w = candidate.display_name;
++
++      bool is_default = false;
++      if (!default_browser_name.empty()) {
++        if (default_browser_name.find(candidate.display_name) != std::wstring::npos ||
++            name_w.find(default_browser_name) != std::wstring::npos) {
++          is_default = true;
++        }
++      }
++
++      std::u16string display_u16 = base::WideToUTF16(name_w);
++      if (is_default) {
++        display_u16 += u" (Default)";
++      }
++
++      sp.importer_name = display_u16;
++      sp.importer_type = importer::TYPE_EDGE;
++      sp.source_path = candidate.profile_path;
++      sp.services_supported = importer::HISTORY | importer::FAVORITES |
++                              importer::AUTOFILL_FORM_DATA |
++                              importer::PASSWORDS | importer::SEARCH_ENGINES;
++
++      if (is_default) {
++        detected_browsers.insert(detected_browsers.begin(), sp);
++      } else {
++        detected_browsers.push_back(sp);
++      }
++    }
++  }
++
++  if (!default_browser_name.empty()) {
++    bool already_present = false;
++    for (const auto& b : detected_browsers) {
++      if (b.importer_name.find(u"(Default)") != std::u16string::npos) {
++        already_present = true;
++        break;
++      }
++    }
++    if (!already_present) {
++      importer::SourceProfile def_sp;
++      def_sp.importer_name = base::WideToUTF16(default_browser_name) + u" (Default)";
++      def_sp.importer_type = importer::TYPE_EDGE;
++      def_sp.services_supported = importer::HISTORY | importer::FAVORITES;
++      detected_browsers.insert(detected_browsers.begin(), def_sp);
++    }
++  }
++
++  profiles->insert(profiles->begin(), detected_browsers.begin(), detected_browsers.end());
++}
++
+ void DetectIEProfiles(std::vector<importer::SourceProfile>* profiles) {
+   base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                 base::BlockingType::MAY_BLOCK);
+@@ -56,12 +176,10 @@ void DetectEdgeProfiles(std::vector<importer::SourceProfile>* profiles) {
+ 
+ void DetectBuiltinWindowsProfiles(
+     std::vector<importer::SourceProfile>* profiles) {
+-  if (shell_integration::IsIEDefaultBrowser()) {
++  DetectInstalledBrowsersWin(profiles);
++  if (profiles->empty()) {
+     DetectIEProfiles(profiles);
+     DetectEdgeProfiles(profiles);
+-  } else {
+-    DetectEdgeProfiles(profiles);
+-    DetectIEProfiles(profiles);
+   }
+ }
+ 
+diff --git a/chrome/utility/importer/edge_importer_win.cc b/chrome/utility/importer/edge_importer_win.cc
+index fe19ad9436..db100beb82 100644
+--- a/chrome/utility/importer/edge_importer_win.cc
++++ b/chrome/utility/importer/edge_importer_win.cc
+@@ -17,17 +17,23 @@
+ #include "base/files/file_path.h"
+ #include "base/files/file_util.h"
+ #include "base/logging.h"
++#include "base/json/json_reader.h"
+ #include "base/memory/raw_ptr.h"
+ #include "base/memory/ref_counted.h"
+ #include "base/strings/string_util.h"
++#include "base/strings/utf_string_conversions.h"
+ #include "base/time/time.h"
++#include "base/values.h"
+ #include "base/win/windows_version.h"
+ #include "chrome/common/importer/edge_importer_utils_win.h"
+ #include "chrome/common/importer/imported_bookmark_entry.h"
+ #include "chrome/common/importer/importer_bridge.h"
++#include "chrome/common/importer/importer_url_row.h"
+ #include "chrome/grit/generated_resources.h"
+ #include "chrome/utility/importer/edge_database_reader_win.h"
+ #include "chrome/utility/importer/favicon_reencode.h"
++#include "sql/database.h"
++#include "sql/statement.h"
+ #include "ui/base/l10n/l10n_util.h"
+ #include "url/gurl.h"
+ 
+@@ -153,6 +159,99 @@ void BuildBookmarkEntries(const EdgeFavoriteEntry& current_entry,
+   }
+ }
+ 
++void ParseChromiumNode(const base::Value::Dict& node,
++                       bool in_toolbar,
++                       std::vector<std::u16string>* path,
++                       std::vector<ImportedBookmarkEntry>* bookmarks) {
++  const std::string* type = node.FindString("type");
++  const std::string* name = node.FindString("name");
++  std::u16string title = name ? base::UTF8ToUTF16(*name) : std::u16string();
++
++  if (type && *type == "url") {
++    const std::string* url_str = node.FindString("url");
++    if (url_str) {
++      GURL url(*url_str);
++      if (url.is_valid()) {
++        ImportedBookmarkEntry entry;
++        entry.in_toolbar = in_toolbar;
++        entry.is_folder = false;
++        entry.url = url;
++        entry.title = title;
++        entry.path = *path;
++        bookmarks->push_back(entry);
++      }
++    }
++  } else if (type && *type == "folder") {
++    const base::Value::List* children = node.FindList("children");
++    if (children) {
++      path->push_back(title);
++      for (const auto& child : *children) {
++        if (child.is_dict()) {
++          ParseChromiumNode(child.GetDict(), in_toolbar, path, bookmarks);
++        }
++      }
++      path->pop_back();
++    }
++  }
++}
++
++void ParseChromiumBookmarks(const base::FilePath& bookmarks_path,
++                            std::vector<ImportedBookmarkEntry>* bookmarks) {
++  std::string content;
++  if (!base::ReadFileToString(bookmarks_path, &content)) {
++    return;
++  }
++
++  std::optional<base::Value> json_val = base::JSONReader::Read(content);
++  if (!json_val || !json_val->is_dict()) {
++    return;
++  }
++
++  const base::Value::Dict* roots = json_val->GetDict().FindDict("roots");
++  if (!roots) return;
++
++  std::vector<std::u16string> path;
++
++  // 1. Bookmark bar
++  const base::Value::Dict* bookmark_bar = roots->FindDict("bookmark_bar");
++  if (bookmark_bar) {
++    const base::Value::List* children = bookmark_bar->FindList("children");
++    if (children) {
++      for (const auto& child : *children) {
++        if (child.is_dict()) {
++          ParseChromiumNode(child.GetDict(), /*in_toolbar=*/true, &path, bookmarks);
++        }
++      }
++    }
++  }
++
++  // 2. Other bookmarks
++  const base::Value::Dict* other = roots->FindDict("other");
++  if (other) {
++    const base::Value::List* children = other->FindList("children");
++    if (children) {
++      for (const auto& child : *children) {
++        if (child.is_dict()) {
++          ParseChromiumNode(child.GetDict(), /*in_toolbar=*/false, &path, bookmarks);
++        }
++      }
++    }
++  }
++
++  // 3. Synced bookmarks
++  const base::Value::Dict* synced = roots->FindDict("synced");
++  if (synced) {
++    const base::Value::List* children = synced->FindList("children");
++    if (children) {
++      for (const auto& child : *children) {
++        if (child.is_dict()) {
++          ParseChromiumNode(child.GetDict(), /*in_toolbar=*/false, &path, bookmarks);
++        }
++      }
++    }
++  }
++}
++
+ }  // namespace
+ 
+ EdgeImporter::EdgeImporter() = default;
+@@ -169,6 +268,11 @@ void EdgeImporter::StartImport(const importer::SourceProfile& source_profile,
+     ImportFavorites();
+     bridge_->NotifyItemEnded(importer::FAVORITES);
+   }
++  if ((items & importer::HISTORY) && !cancelled()) {
++    bridge_->NotifyItemStarted(importer::HISTORY);
++    ImportHistory();
++    bridge_->NotifyItemEnded(importer::HISTORY);
++  }
+   bridge_->NotifyEnded();
+ }
+ 
+@@ -188,6 +292,52 @@ void EdgeImporter::ImportFavorites() {
+     bridge_->SetFavicons(favicons);
+ }
+ 
++void EdgeImporter::ImportHistory() {
++  base::FilePath history_path = source_path_.Append(L"History");
++  if (!base::PathExists(history_path)) {
++    return;
++  }
++
++  base::FilePath temp_file;
++  if (!base::CreateTemporaryFile(&temp_file)) {
++    return;
++  }
++  if (!base::CopyFile(history_path, temp_file)) {
++    base::DeleteFile(temp_file);
++    return;
++  }
++
++  sql::Database db("History");
++  if (db.Open(temp_file)) {
++    sql::Statement s(db.GetUniqueStatement(
++        "SELECT url, title, visit_count, typed_count, last_visit_time FROM urls ORDER BY last_visit_time DESC LIMIT 200"));
++    std::vector<ImporterURLRow> rows;
++    while (s.Step() && !cancelled()) {
++      std::string url_str = s.ColumnString(0);
++      std::u16string title = s.ColumnString16(1);
++      int visit_count = s.ColumnInt(2);
++      int typed_count = s.ColumnInt(3);
++      int64_t last_visit_time = s.ColumnInt64(4);
++
++      GURL url(url_str);
++      if (url.is_valid()) {
++        ImporterURLRow row(url);
++        row.title = title;
++        row.visit_count = visit_count;
++        row.typed_count = typed_count;
++        row.last_visit = base::Time::FromInternalValue(last_visit_time);
++        row.hidden = false;
++        rows.push_back(row);
++      }
++    }
++    db.Close();
++    if (!rows.empty() && !cancelled()) {
++      bridge_->SetHistoryItems(rows, importer::VISIT_SOURCE_BROWSED);
++    }
++  }
++  base::DeleteFile(temp_file);
++}
++
+ // From Edge 13 (released with Windows 10 TH2), Favorites are stored in a JET
+ // database within the Edge local storage. The import uses the ESE library to
+ // open and read the data file. The data is stored in a Favorites table with
+@@ -209,6 +359,13 @@ void EdgeImporter::ImportFavorites() {
+ void EdgeImporter::ParseFavoritesDatabase(
+     std::vector<ImportedBookmarkEntry>* bookmarks,
+     favicon_base::FaviconUsageDataList* favicons) {
++  // Check if source path contains modern Chromium JSON Bookmarks
++  base::FilePath json_bookmarks = source_path_.Append(L"Bookmarks");
++  if (base::PathExists(json_bookmarks)) {
++    ParseChromiumBookmarks(json_bookmarks, bookmarks);
++    return;
++  }
++
+   base::FilePath database_path = FindSpartanDatabase(source_path_);
+   if (database_path.empty())
+     return;
+diff --git a/chrome/utility/importer/edge_importer_win.h b/chrome/utility/importer/edge_importer_win.h
+index 3e1f1f050c..7b6c4ab7a8 100644
+--- a/chrome/utility/importer/edge_importer_win.h
++++ b/chrome/utility/importer/edge_importer_win.h
+@@ -31,6 +31,7 @@ class EdgeImporter : public Importer {
+   ~EdgeImporter() override;
+ 
+   void ImportFavorites();
++  void ImportHistory();
+   // This function will read the favorites from the spartan database storing
+   // the bookmark items in |bookmarks| and favicon information in |favicons|.
+   void ParseFavoritesDatabase(std::vector<ImportedBookmarkEntry>* bookmarks,

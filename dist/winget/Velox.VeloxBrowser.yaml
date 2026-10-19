@@ -1,0 +1,29 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.singleton.1.6.0.schema.json
+PackageIdentifier: Velox.VeloxBrowser
+PackageVersion: 134.0.6998.178
+PackageName: Velox Browser
+Publisher: Velox Team
+Author: Louay
+License: BSD-3-Clause
+ShortDescription: High-performance, shielded web browser with native tab islands and hardware acceleration.
+Description: |
+  Velox is a next-generation desktop browser built on Chromium with native
+  Velox Shield ad and tracker blocking, Opera One-style Tab Islands, ultra-fast
+  hardware acceleration, and zero background telemetry or tray clutter.
+Moniker: velox
+Tags:
+  - browser
+  - chromium
+  - privacy
+  - adblock
+  - tabs
+Installers:
+  - Architecture: x64
+    InstallerType: exe
+    InstallerUrl: https://github.com/Louay/velox/releases/download/v134.0.6998.178/VeloxSetup.exe
+    InstallerSha256: BB91F688336AC11DB6DF73AEA43F0E09EDB50AA7DC1C8C76AFA8EB7F3D02AE7D
+    InstallerSwitches:
+      Silent: --do-not-launch-chrome
+      SilentWithProgress: --do-not-launch-chrome
+ManifestType: singleton
+ManifestVersion: 1.6.0

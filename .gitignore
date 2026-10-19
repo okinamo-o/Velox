@@ -1,0 +1,33 @@
+# Chromium Source Tree & Depot Tools (Chromium upstream is fetched via gclient)
+src/
+.cipd/
+.gclient
+.gclient_entries
+.gclient_previous_sync_commits
+.gcs_entries
+
+# Build Binaries & Packages (These are published to GitHub Releases)
+*.exe
+*.zip
+*.dll
+*.pdb
+*.dmp
+*.pak
+*.bin
+out/
+dist/*.exe
+dist/*.zip
+
+# Test Profiles, Scratch & Old Releases
+test-profile*/
+scratch/
+releases/
+*.log
+log.txt
+__pycache__/
+*.pyc
+
+# System files
+Thumbs.db
+Desktop.ini
+.DS_Store

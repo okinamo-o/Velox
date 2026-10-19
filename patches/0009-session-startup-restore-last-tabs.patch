@@ -1,0 +1,36 @@
+diff --git a/chrome/browser/prefs/session_startup_pref.cc b/chrome/browser/prefs/session_startup_pref.cc
+index 266dc5f675..2b15c4a556 100644
+--- a/chrome/browser/prefs/session_startup_pref.cc
++++ b/chrome/browser/prefs/session_startup_pref.cc
+@@ -66,11 +66,8 @@ void SessionStartupPref::RegisterProfilePrefs(
+ 
+ // static
+ SessionStartupPref::Type SessionStartupPref::GetDefaultStartupType() {
+-#if BUILDFLAG(IS_CHROMEOS)
++  // VELOX: Always keep and restore tabs across restarts ("Continue where you left off")
+   return SessionStartupPref::LAST;
+-#else
+-  return SessionStartupPref::DEFAULT;
+-#endif
+ }
+ 
+ // static
+@@ -114,8 +111,16 @@ SessionStartupPref SessionStartupPref::GetStartupPref(
+     const PrefService* prefs) {
+   DCHECK(prefs);
+ 
+-  SessionStartupPref pref(
+-      PrefValueToType(prefs->GetInteger(prefs::kRestoreOnStartup)));
++  const PrefService::Preference* pref_restore =
++      prefs->FindPreference(prefs::kRestoreOnStartup);
++  SessionStartupPref::Type startup_type = GetDefaultStartupType();
++  if (pref_restore && pref_restore->HasUserSetting()) {
++    startup_type = PrefValueToType(prefs->GetInteger(prefs::kRestoreOnStartup));
++    if (startup_type == SessionStartupPref::DEFAULT) {
++      startup_type = SessionStartupPref::LAST;
++    }
++  }
++  SessionStartupPref pref(startup_type);
+ 
+   // Always load the urls, even if the pref type isn't URLS. This way the
+   // preferences panels can show the user their last choice.

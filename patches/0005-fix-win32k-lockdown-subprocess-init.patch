@@ -1,0 +1,58 @@
+From 0000000000000000000000000000000000000005 Mon Sep 17 00:00:00 2001
+From: VELOX Lead Systems Engineer <build@velox-browser.org>
+Date: Sat, 26 Sep 2026 21:50:00 +0100
+Subject: [PATCH 0005/0005] Fix AppContainer and Win32k lockdown violation for sandboxed Windows subprocesses
+
+---
+ base/win/win_util.cc        | 7 +++++++
+ content/app/content_main.cc | 8 ++++++--
+ 2 files changed, 13 insertions(+), 2 deletions(-)
+
+diff --git a/base/win/win_util.cc b/base/win/win_util.cc
+index 2e0d6cdefa..397921a337 100644
+--- a/base/win/win_util.cc
++++ b/base/win/win_util.cc
+@@ -843,6 +843,13 @@ bool IsJoinedToAzureAD() {
+ 
+ bool IsUser32AndGdi32Available() {
+   static const bool is_user32_and_gdi32_available = [] {
++    // If running in an AppContainer (e.g. Network Service sandbox), User32 and
++    // Gdi32 cannot connect to the desktop window station.
++    auto token = base::win::AccessToken::FromCurrentProcess();
++    if (token && token->IsAppContainer()) {
++      return false;
++    }
++
+     // If win32k syscalls aren't disabled, then user32 and gdi32 are available.
+     PROCESS_MITIGATION_SYSTEM_CALL_DISABLE_POLICY policy = {};
+     if (::GetProcessMitigationPolicy(GetCurrentProcess(),
+diff --git a/content/app/content_main.cc b/content/app/content_main.cc
+index 54dfbaa6df..1097790843 100644
+--- a/content/app/content_main.cc
++++ b/content/app/content_main.cc
+@@ -142,8 +142,10 @@ void CommonSubprocessInit() {
+ #endif
+ 
+ #if !defined(OFFICIAL_BUILD) && BUILDFLAG(IS_WIN)
+-  base::RouteStdioToConsole(false);
+-  LoadLibraryA("dbghelp.dll");
++  if (base::win::IsUser32AndGdi32Available()) {
++    base::RouteStdioToConsole(false);
++    LoadLibraryA("dbghelp.dll");
++  }
+ #endif
+ }
+ 
+@@ -242,7 +244,9 @@ NO_STACK_PROTECTOR int RunContentProcess(
+ 
+ #if BUILDFLAG(IS_WIN)
+     base::win::RegisterInvalidParamHandler();
+-    ui::win::CreateATLModuleIfNeeded();
++    if (base::win::IsUser32AndGdi32Available()) {
++      ui::win::CreateATLModuleIfNeeded();
++    }
+ #endif  // BUILDFLAG(IS_WIN)
+ 
+ #if !BUILDFLAG(IS_ANDROID)
+-- 
+2.53.0.windows.2

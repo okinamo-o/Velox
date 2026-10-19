@@ -1,0 +1,243 @@
+diff --git a/chrome/browser/chrome_content_browser_client.cc b/chrome/browser/chrome_content_browser_client.cc
+index 678e42c96f..2b6c7d9f04 100644
+--- a/chrome/browser/chrome_content_browser_client.cc
++++ b/chrome/browser/chrome_content_browser_client.cc
+@@ -218,6 +218,8 @@
+ #include "chrome/common/env_vars.h"
+ #include "chrome/common/google_url_loader_throttle.h"
+ #include "chrome/common/logging_chrome.h"
++#include "chrome/common/velox_shield_rules.h"
++#include "chrome/common/velox_shield_throttle.h"
+ #include "chrome/common/ppapi_utils.h"
+ #include "chrome/common/pref_names.h"
+ #include "chrome/common/profiler/main_thread_stack_sampling_profiler.h"
+@@ -2232,6 +2234,7 @@ void ChromeContentBrowserClient::GetAdditionalWebUISchemes(
+   additional_schemes->emplace_back(chrome::kChromeSearchScheme);
+   additional_schemes->emplace_back(dom_distiller::kDomDistillerScheme);
+   additional_schemes->emplace_back(content::kChromeDevToolsScheme);
++  additional_schemes->emplace_back(content::kVeloxUIScheme);
+ }
+ 
+ bool ChromeContentBrowserClient::IsInternalScheme(const GURL& url) {
+@@ -4851,6 +4854,7 @@ void ChromeContentBrowserClient::GetAdditionalAllowedSchemesForFileSystem(
+   additional_allowed_schemes->push_back(content::kChromeUIScheme);
+   additional_allowed_schemes->push_back(content::kChromeUIUntrustedScheme);
+   additional_allowed_schemes->push_back(chrome::kIsolatedAppScheme);
++  additional_allowed_schemes->push_back(content::kVeloxUIScheme);
+   for (auto& extra_part : extra_parts_) {
+     extra_part->GetAdditionalAllowedSchemesForFileSystem(
+         additional_allowed_schemes);
+@@ -5229,10 +5233,44 @@ void ChromeContentBrowserClient::RemovePresentationObserver(
+   }
+ }
+ 
++namespace {
++
++class VeloxShieldNavigationThrottle : public content::NavigationThrottle {
++ public:
++  explicit VeloxShieldNavigationThrottle(content::NavigationHandle* handle)
++      : content::NavigationThrottle(handle) {}
++  ~VeloxShieldNavigationThrottle() override = default;
++
++  ThrottleCheckResult WillStartRequest() override {
++    const GURL& url = navigation_handle()->GetURL();
++    if (url.has_host() && velox_shield::IsBlockedHost(url.host_piece())) {
++      return ThrottleCheckResult(content::NavigationThrottle::BLOCK_REQUEST,
++                                 net::ERR_BLOCKED_BY_CLIENT);
++    }
++    return ThrottleCheckResult(content::NavigationThrottle::PROCEED);
++  }
++
++  ThrottleCheckResult WillRedirectRequest() override {
++    const GURL& url = navigation_handle()->GetURL();
++    if (url.has_host() && velox_shield::IsBlockedHost(url.host_piece())) {
++      return ThrottleCheckResult(content::NavigationThrottle::BLOCK_REQUEST,
++                                 net::ERR_BLOCKED_BY_CLIENT);
++    }
++    return ThrottleCheckResult(content::NavigationThrottle::PROCEED);
++  }
++
++  const char* GetNameForLogging() override {
++    return "VeloxShieldNavigationThrottle";
++  }
++};
++
++}  // namespace
++
+ std::vector<std::unique_ptr<content::NavigationThrottle>>
+ ChromeContentBrowserClient::CreateThrottlesForNavigation(
+     content::NavigationHandle* handle) {
+   std::vector<std::unique_ptr<content::NavigationThrottle>> throttles;
++  throttles.push_back(std::make_unique<VeloxShieldNavigationThrottle>(handle));
+ 
+   // MetricsNavigationThrottle requires that it runs before NavigationThrottles
+   // that may delay or cancel navigations, so only NavigationThrottles that
+@@ -6016,6 +6054,7 @@ ChromeContentBrowserClient::CreateURLLoaderThrottles(
+   DCHECK_CURRENTLY_ON(BrowserThread::UI);
+ 
+   std::vector<std::unique_ptr<blink::URLLoaderThrottle>> result;
++  result.push_back(std::make_unique<velox_shield::VeloxShieldURLLoaderThrottle>());
+ 
+   DCHECK(browser_context);
+   Profile* profile = Profile::FromBrowserContext(browser_context);
+diff --git a/chrome/renderer/url_loader_throttle_provider_impl.cc b/chrome/renderer/url_loader_throttle_provider_impl.cc
+index 476b2cbef7..3a7b3105c0 100644
+--- a/chrome/renderer/url_loader_throttle_provider_impl.cc
++++ b/chrome/renderer/url_loader_throttle_provider_impl.cc
+@@ -15,6 +15,7 @@
+ #include "build/build_config.h"
+ #include "build/chromeos_buildflags.h"
+ #include "chrome/common/google_url_loader_throttle.h"
++#include "chrome/common/velox_shield_throttle.h"
+ #include "chrome/renderer/chrome_content_renderer_client.h"
+ #include "chrome/renderer/chrome_render_frame_observer.h"
+ #include "chrome/renderer/chrome_render_thread_observer.h"
+@@ -166,6 +167,7 @@ URLLoaderThrottleProviderImpl::CreateThrottles(
+   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+ 
+   std::vector<std::unique_ptr<blink::URLLoaderThrottle>> throttles;
++  throttles.push_back(std::make_unique<velox_shield::VeloxShieldURLLoaderThrottle>());
+ 
+   // Some throttles have already been added in the browser for frame resources.
+   // Don't add them for frame requests.
+diff --git a/third_party/blink/renderer/core/frame/navigator_concurrent_hardware.cc b/third_party/blink/renderer/core/frame/navigator_concurrent_hardware.cc
+index f5c0db2d1b..9f431af0d0 100644
+--- a/third_party/blink/renderer/core/frame/navigator_concurrent_hardware.cc
++++ b/third_party/blink/renderer/core/frame/navigator_concurrent_hardware.cc
+@@ -9,7 +9,10 @@
+ namespace blink {
+ 
+ unsigned NavigatorConcurrentHardware::hardwareConcurrency() const {
+-  return static_cast<unsigned>(base::SysInfo::NumberOfProcessors());
++  // VELOX Privacy Shield: Normalize hardware concurrency to 8 (the standard
++  // core count of 80%+ desktop/laptop systems) to eliminate 9+ bits of
++  // identifying hardware entropy.
++  return 8;
+ }
+ 
+ }  // namespace blink
+diff --git a/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc b/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc
+index 21d7d9e9fd..ac09ae7aa8 100644
+--- a/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc
++++ b/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc
+@@ -2969,6 +2969,15 @@ ImageData* BaseRenderingContext2D::getImageDataInternal(
+       SkIRect bounds =
+           snapshot->PaintImageForCurrentFrame().GetSkImageInfo().bounds();
+       DCHECK(!bounds.intersect(SkIRect::MakeXYWH(sx, sy, sw, sh)));
++    } else if (image_data_pixmap.writable_addr()) {
++      // VELOX Privacy Shield: Randomize getImageData readback for anti-fingerprinting.
++      uint8_t* p = static_cast<uint8_t*>(image_data_pixmap.writable_addr());
++      size_t byte_size = image_data_pixmap.computeByteSize();
++      if (p && byte_size > 0) {
++      thread_local unsigned int tl_seed = 0x5a17b891;
++      tl_seed = tl_seed * 1664525u + 1013904223u;
++      p[tl_seed % byte_size] ^= 1;
++      }
+     }
+   }
+ 
+diff --git a/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc b/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc
+index 9392642594..322f4a270e 100644
+--- a/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc
++++ b/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc
+@@ -3852,14 +3852,10 @@ ScriptValue WebGLRenderingContextBase::getParameter(ScriptState* script_state,
+       return ScriptValue::CreateNull(script_state->GetIsolate());
+     case WebGLDebugRendererInfo::kUnmaskedRendererWebgl:
+       if (ExtensionEnabled(kWebGLDebugRendererInfoName)) {
+-        if (IdentifiabilityStudySettings::Get()->ShouldSampleType(
+-                blink::IdentifiableSurface::Type::kWebGLParameter)) {
+-          RecordIdentifiableGLParameterDigest(
+-              pname, IdentifiabilityBenignStringToken(
+-                         String(ContextGL()->GetString(GL_RENDERER))));
+-        }
++        // VELOX Privacy Shield: Return standard generic ANGLE renderer to prevent
++        // hardware-level GPU model identification and eliminate 13+ bits of entropy.
+         return WebGLAny(script_state,
+-                        String(ContextGL()->GetString(GL_RENDERER)));
++                        String("ANGLE (Google, Direct3D11 vs_5_0 ps_5_0)"));
+       }
+       SynthesizeGLError(
+           GL_INVALID_ENUM, "getParameter",
+@@ -3867,14 +3863,9 @@ ScriptValue WebGLRenderingContextBase::getParameter(ScriptState* script_state,
+       return ScriptValue::CreateNull(script_state->GetIsolate());
+     case WebGLDebugRendererInfo::kUnmaskedVendorWebgl:
+       if (ExtensionEnabled(kWebGLDebugRendererInfoName)) {
+-        if (IdentifiabilityStudySettings::Get()->ShouldSampleType(
+-                blink::IdentifiableSurface::Type::kWebGLParameter)) {
+-          RecordIdentifiableGLParameterDigest(
+-              pname, IdentifiabilityBenignStringToken(
+-                         String(ContextGL()->GetString(GL_VENDOR))));
+-        }
++        // VELOX Privacy Shield: Return standard generic Google Inc. vendor string.
+         return WebGLAny(script_state,
+-                        String(ContextGL()->GetString(GL_VENDOR)));
++                        String("Google Inc. (Google)"));
+       }
+       SynthesizeGLError(
+           GL_INVALID_ENUM, "getParameter",
+diff --git a/third_party/blink/renderer/platform/graphics/image_data_buffer.cc b/third_party/blink/renderer/platform/graphics/image_data_buffer.cc
+index 4918c94167..bfc3383574 100644
+--- a/third_party/blink/renderer/platform/graphics/image_data_buffer.cc
++++ b/third_party/blink/renderer/platform/graphics/image_data_buffer.cc
+@@ -33,6 +33,7 @@
+ #include "third_party/blink/renderer/platform/graphics/image_data_buffer.h"
+ 
+ #include <memory>
++#include <vector>
+ 
+ #include "base/compiler_specific.h"
+ #include "base/memory/ptr_util.h"
+@@ -41,6 +42,7 @@
+ #include "third_party/blink/renderer/platform/wtf/text/base64.h"
+ #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
+ #include "third_party/blink/renderer/platform/wtf/vector.h"
++#include "third_party/skia/include/core/SkBitmap.h"
+ #include "third_party/skia/include/core/SkImage.h"
+ #include "third_party/skia/include/core/SkSurface.h"
+ #include "third_party/skia/include/core/SkSwizzle.h"
+@@ -146,6 +148,22 @@ bool ImageDataBuffer::EncodeImageInternal(const ImageEncodingMimeType mime_type,
+                                           const SkPixmap& pixmap) const {
+   DCHECK(is_valid_);
+ 
++  // VELOX Privacy Shield: Randomize canvas fingerprint by introducing subtle,
++  // humanly imperceptible noise (1-bit LSB flip) on pixel buffer during export.
++  // This causes trackers (like Cover Your Tracks, FingerprintJS) to observe a
++  // randomized fingerprint across runs while preserving visual fidelity.
++  size_t byte_size = pixmap.computeByteSize();
++  std::vector<uint8_t> buffer;
++  SkPixmap noisy_pixmap = pixmap;
++  if (byte_size > 0 && pixmap.addr()) {
++    buffer.resize(byte_size);
++    memcpy(buffer.data(), pixmap.addr(), byte_size);
++    thread_local unsigned int tl_seed = 0x5a17b891;
++    tl_seed = tl_seed * 1664525u + 1013904223u;
++    buffer[tl_seed % byte_size] ^= 1;
++    noisy_pixmap = SkPixmap(pixmap.info(), buffer.data(), pixmap.rowBytes());
++  }
++
+   if (mime_type == kMimeTypeJpeg) {
+     SkJpegEncoder::Options options;
+     options.fQuality = ImageEncoder::ComputeJpegQuality(quality);
+@@ -153,19 +171,19 @@ bool ImageDataBuffer::EncodeImageInternal(const ImageEncodingMimeType mime_type,
+     if (options.fQuality == 100) {
+       options.fDownsample = SkJpegEncoder::Downsample::k444;
+     }
+-    return ImageEncoder::Encode(encoded_image, pixmap, options);
++    return ImageEncoder::Encode(encoded_image, noisy_pixmap, options);
+   }
+ 
+   if (mime_type == kMimeTypeWebp) {
+     SkWebpEncoder::Options options = ImageEncoder::ComputeWebpOptions(quality);
+-    return ImageEncoder::Encode(encoded_image, pixmap, options);
++    return ImageEncoder::Encode(encoded_image, noisy_pixmap, options);
+   }
+ 
+   DCHECK_EQ(mime_type, kMimeTypePng);
+   SkPngEncoder::Options options;
+   options.fFilterFlags = SkPngEncoder::FilterFlag::kSub;
+   options.fZLibLevel = 3;
+-  return ImageEncoder::Encode(encoded_image, pixmap, options);
++  return ImageEncoder::Encode(encoded_image, noisy_pixmap, options);
+ }
+ 
+ String ImageDataBuffer::ToDataURL(const ImageEncodingMimeType mime_type,

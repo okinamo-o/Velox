@@ -1,0 +1,120 @@
+diff --git a/chrome/browser/search/search.cc b/chrome/browser/search/search.cc
+index cb37fdb168..63b8f2cd5b 100644
+--- a/chrome/browser/search/search.cc
++++ b/chrome/browser/search/search.cc
+@@ -95,7 +95,7 @@ enum NewTabURLState {
+   NEW_TAB_URL_MAX
+ };
+ 
+-const TemplateURL* GetDefaultSearchProviderTemplateURL(Profile* profile) {
++[[maybe_unused]] const TemplateURL* GetDefaultSearchProviderTemplateURL(Profile* profile) {
+   if (profile) {
+     TemplateURLService* template_url_service =
+         TemplateURLServiceFactory::GetForProfile(profile);
+@@ -142,7 +142,7 @@ bool IsNTPOrRelatedURLHelper(const GURL& url, Profile* profile) {
+                                     IsMatchingServiceWorker(url, new_tab_url));
+ }
+ 
+-bool IsURLAllowedForSupervisedUser(const GURL& url, Profile& profile) {
++[[maybe_unused]] bool IsURLAllowedForSupervisedUser(const GURL& url, Profile& profile) {
+   if (!profile.IsChild()) {
+     return true;
+   }
+@@ -174,37 +174,11 @@ struct NewTabURLDetails {
+ #if BUILDFLAG(IS_ANDROID)
+     const GURL local_url;
+ #else
+-    const bool default_is_google = DefaultSearchProviderIsGoogle(profile);
+-    const GURL local_url(default_is_google
+-                             ? chrome::kChromeUINewTabPageURL
+-                             : chrome::kChromeUINewTabPageThirdPartyURL);
+-    if (default_is_google) {
+-      return NewTabURLDetails(local_url, NEW_TAB_URL_VALID);
+-    }
++    // VELOX: Always serve the native branded VELOX New Tab Page (chrome://newtab)
++    // rather than third-party search engine web page redirects.
++    return NewTabURLDetails(GURL(chrome::kChromeUINewTabPageURL),
++                            NEW_TAB_URL_VALID);
+ #endif
+-
+-    const TemplateURL* template_url =
+-        GetDefaultSearchProviderTemplateURL(profile);
+-    if (!profile || !template_url) {
+-      return NewTabURLDetails(local_url, NEW_TAB_URL_BAD);
+-    }
+-
+-    GURL search_provider_url(template_url->new_tab_url_ref().ReplaceSearchTerms(
+-        TemplateURLRef::SearchTermsArgs(std::u16string()),
+-        UIThreadSearchTermsData()));
+-
+-    if (!search_provider_url.is_valid()) {
+-      return NewTabURLDetails(local_url, NEW_TAB_URL_NOT_SET);
+-    }
+-    if (!search_provider_url.SchemeIsCryptographic()) {
+-      return NewTabURLDetails(local_url, NEW_TAB_URL_INSECURE);
+-    }
+-    if (!IsURLAllowedForSupervisedUser(search_provider_url,
+-                                       CHECK_DEREF(profile))) {
+-      return NewTabURLDetails(local_url, NEW_TAB_URL_BLOCKED);
+-    }
+-
+-    return NewTabURLDetails(search_provider_url, NEW_TAB_URL_VALID);
+   }
+ 
+   const GURL url;
+diff --git a/chrome/browser/ui/webui/help/version_updater_win.cc b/chrome/browser/ui/webui/help/version_updater_win.cc
+index fe488d67a4..cd0c47d607 100644
+--- a/chrome/browser/ui/webui/help/version_updater_win.cc
++++ b/chrome/browser/ui/webui/help/version_updater_win.cc
+@@ -42,12 +42,11 @@ class VersionUpdaterWin : public VersionUpdater, public UpdateCheckDelegate {
+ 
+   // VersionUpdater:
+   void CheckForUpdate(StatusCallback callback, PromoteCallback) override {
+-    // There is no supported integration with Google Update for Chromium.
+     callback_ = std::move(callback);
+ 
+-    callback_.Run(CHECKING, 0, false, false, std::string(), 0,
++    // VELOX standalone version is up to date.
++    callback_.Run(UPDATED, 0, false, false, std::string(), 0,
+                   std::u16string());
+-    DoBeginUpdateCheck(false /* !install_update_if_possible */);
+   }
+ 
+   // UpdateCheckDelegate:
+diff --git a/components/search_engines/search_engine_countries-inc.cc b/components/search_engines/search_engine_countries-inc.cc
+index a4a0459de0..d6f41fd8e4 100644
+--- a/components/search_engines/search_engine_countries-inc.cc
++++ b/components/search_engines/search_engine_countries-inc.cc
+@@ -38,6 +38,7 @@ struct EngineAndTier {
+ 
+ // Default (for countries with no better engine set)
+ constexpr EngineAndTier engines_default[] = {
++    {SearchEngineTier::kTopEngines, &duckduckgo},
+     {SearchEngineTier::kTopEngines, &google},
+     {SearchEngineTier::kTopEngines, &bing},
+     {SearchEngineTier::kTopEngines, &yahoo},
+@@ -1055,10 +1056,10 @@ constexpr EngineAndTier engines_UA[] = {
+ 
+ // United States
+ constexpr EngineAndTier engines_US[] = {
++    {SearchEngineTier::kTopEngines, &duckduckgo},
+     {SearchEngineTier::kTopEngines, &google},
+     {SearchEngineTier::kTopEngines, &bing},
+     {SearchEngineTier::kTopEngines, &yahoo},
+-    {SearchEngineTier::kTopEngines, &duckduckgo},
+     {SearchEngineTier::kTopEngines, &yandex_com},
+ };
+ 
+diff --git a/components/search_engines/template_url_prepopulate_data.cc b/components/search_engines/template_url_prepopulate_data.cc
+index 1d613773ea..cdbe514328 100644
+--- a/components/search_engines/template_url_prepopulate_data.cc
++++ b/components/search_engines/template_url_prepopulate_data.cc
+@@ -319,7 +319,7 @@ std::unique_ptr<TemplateURLData> GetPrepopulatedFallbackSearch(
+     PrefService* prefs,
+     search_engines::SearchEngineChoiceService* search_engine_choice_service) {
+   return FindPrepopulatedEngineInternal(prefs, search_engine_choice_service,
+-                                        google.id,
++                                        duckduckgo.id,
+                                         /*use_first_as_fallback=*/true);
+ }
+ 

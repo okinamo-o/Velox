@@ -1,0 +1,10 @@
+import os
+
+svg = '''<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 -960 960 960" style="background:#121820;">
+  <path fill="#00e5ff" fill-rule="evenodd" d="M160-780c120 140 240 420 320 640 80-220 200-500 320-640-80 60-180 280-260 440-30 60-90 60-120 0-80-160-180-380-260-440zm120 80c70 140 150 320 200 430 50-110 130-290 200-430-60 40-140 220-200 340-60-120-140-300-200-340z"/>
+</svg>'''
+
+with open(r"D:\Velox\preview_v.svg", "w", encoding="utf-8") as f:
+    f.write(svg)
+
+print("Saved preview_v.svg")

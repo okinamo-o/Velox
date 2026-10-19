@@ -1,0 +1,98 @@
+diff --git a/chrome/app/chromium_strings.grd b/chrome/app/chromium_strings.grd
+index b645fbd12d..a493c350bc 100644
+--- a/chrome/app/chromium_strings.grd
++++ b/chrome/app/chromium_strings.grd
+@@ -294,10 +294,10 @@ If you update this file, be sure also to update google_chrome_strings.grd. -->
+         </then>
+         <else>
+           <message name="IDS_PRODUCT_NAME" desc="The Chrome application name" translateable="false">
+-            Chromium
++            VELOX
+           </message>
+           <message name="IDS_SHORT_PRODUCT_NAME" desc="The Chrome application short name." translateable="false">
+-            Chromium
++            VELOX
+           </message>
+         </else>
+       </if>
+@@ -346,7 +346,7 @@ If you update this file, be sure also to update google_chrome_strings.grd. -->
+       </if>
+       <if expr="not is_macosx and not is_chromeos">
+         <message name="IDS_TASK_MANAGER_TITLE" desc="The title of the Task Manager window">
+-          Task Manager - Chromium
++          Task Manager - VELOX
+         </message>
+       </if>
+       <message name="IDS_TASK_MANAGER_SEARCH_PLACEHOLDER" desc="The placeholder text for the Search bar in the Task Manager window" translateable="false">
+@@ -383,7 +383,7 @@ If you update this file, be sure also to update google_chrome_strings.grd. -->
+           </then>
+           <else>
+             <message name="IDS_BROWSER_WINDOW_TITLE_FORMAT" desc="The format for titles displayed in tabs and popup windows">
+-              <ph name="PAGE_TITLE">$1<ex>Google</ex></ph> - Chromium
++              <ph name="PAGE_TITLE">$1<ex>Google</ex></ph> - VELOX
+             </message>
+           </else>
+         </if>
+diff --git a/chrome/app/theme/chromium/BRANDING b/chrome/app/theme/chromium/BRANDING
+index f8363d5b29..6cf89fcebf 100644
+--- a/chrome/app/theme/chromium/BRANDING
++++ b/chrome/app/theme/chromium/BRANDING
+@@ -1,10 +1,10 @@
+-COMPANY_FULLNAME=The Chromium Authors
+-COMPANY_SHORTNAME=The Chromium Authors
+-PRODUCT_FULLNAME=Chromium
+-PRODUCT_SHORTNAME=Chromium
+-PRODUCT_INSTALLER_FULLNAME=Chromium Installer
+-PRODUCT_INSTALLER_SHORTNAME=Chromium Installer
+-COPYRIGHT=Copyright @LASTCHANGE_YEAR@ The Chromium Authors. All rights reserved.
+-MAC_BUNDLE_ID=org.chromium.Chromium
+-MAC_CREATOR_CODE=Cr24
++COMPANY_FULLNAME=VELOX Browser Project
++COMPANY_SHORTNAME=VELOX
++PRODUCT_FULLNAME=VELOX
++PRODUCT_SHORTNAME=VELOX
++PRODUCT_INSTALLER_FULLNAME=VELOX Installer
++PRODUCT_INSTALLER_SHORTNAME=VELOX Installer
++COPYRIGHT=Copyright @LASTCHANGE_YEAR@ The VELOX Authors. All rights reserved.
++MAC_BUNDLE_ID=org.velox.Velox
++MAC_CREATOR_CODE=Vlx1
+ MAC_TEAM_ID=
+diff --git a/chrome/install_static/chromium_install_modes.cc b/chrome/install_static/chromium_install_modes.cc
+index a888596eda..6d5743c42b 100644
+--- a/chrome/install_static/chromium_install_modes.cc
++++ b/chrome/install_static/chromium_install_modes.cc
+@@ -16,11 +16,11 @@ namespace install_static {
+ 
+ const wchar_t kCompanyPathName[] = L"";
+ 
+-const wchar_t kProductPathName[] = L"Chromium";
++const wchar_t kProductPathName[] = L"Velox";
+ 
+ const size_t kProductPathNameLength = _countof(kProductPathName) - 1;
+ 
+-const char kSafeBrowsingName[] = "chromium";
++const char kSafeBrowsingName[] = "velox";
+ 
+ const InstallConstants kInstallModes[] = {
+     // The primary (and only) install mode for Chromium.
+@@ -34,14 +34,14 @@ const InstallConstants kInstallModes[] = {
+         .logo_suffix = L"",  // No logo suffix for the primary install mode.
+         .app_guid =
+             L"",  // Empty app_guid since no integration with Google Update.
+-        .base_app_name = L"Chromium",              // A distinct base_app_name.
+-        .base_app_id = L"Chromium",                // A distinct base_app_id.
+-        .browser_prog_id_prefix = L"ChromiumHTM",  // Browser ProgID prefix.
++        .base_app_name = L"VELOX",              // A distinct base_app_name.
++        .base_app_id = L"Velox",                // A distinct base_app_id.
++        .browser_prog_id_prefix = L"VeloxHTM",  // Browser ProgID prefix.
+         .browser_prog_id_description =
+-            L"Chromium HTML Document",         // Browser ProgID description.
+-        .pdf_prog_id_prefix = L"ChromiumPDF",  // PDF ProgID prefix.
++            L"VELOX HTML Document",         // Browser ProgID description.
++        .pdf_prog_id_prefix = L"VeloxPDF",  // PDF ProgID prefix.
+         .pdf_prog_id_description =
+-            L"Chromium PDF Document",  // PDF ProgID description.
++            L"VELOX PDF Document",  // PDF ProgID description.
+         .active_setup_guid =
+             L"{7D2B3E1D-D096-4594-9D8F-A6667F12E0AC}",  // Active Setup GUID.
+         .legacy_command_execute_clsid =

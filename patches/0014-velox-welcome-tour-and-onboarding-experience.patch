@@ -1,0 +1,492 @@
+diff --git a/chrome/browser/ui/BUILD.gn b/chrome/browser/ui/BUILD.gn
+index a66522f120..f325d8e5c3 100644
+--- a/chrome/browser/ui/BUILD.gn
++++ b/chrome/browser/ui/BUILD.gn
+@@ -146,6 +146,8 @@ static_library("ui") {
+     "webui/about/about_ui.h",
+     "webui/accessibility/accessibility_ui.cc",
+     "webui/accessibility/accessibility_ui.h",
++    "webui/velox/velox_performance_ui.cc",
++    "webui/velox/velox_performance_ui.h",
+     "webui/autofill_and_password_manager_internals/autofill_internals_ui.cc",
+     "webui/autofill_and_password_manager_internals/autofill_internals_ui.h",
+     "webui/autofill_and_password_manager_internals/internals_ui_handler.cc",
+@@ -278,6 +280,8 @@ static_library("ui") {
+     "webui/version/version_handler.h",
+     "webui/version/version_ui.cc",
+     "webui/version/version_ui.h",
++    "webui/velox/velox_welcome_ui.cc",
++    "webui/velox/velox_welcome_ui.h",
+     "webui/webui_load_timer.cc",
+     "webui/webui_load_timer.h",
+   ]
+diff --git a/chrome/browser/ui/startup/startup_tab_provider.cc b/chrome/browser/ui/startup/startup_tab_provider.cc
+index 25d03e96be..40a35dbdc0 100644
+--- a/chrome/browser/ui/startup/startup_tab_provider.cc
++++ b/chrome/browser/ui/startup/startup_tab_provider.cc
+@@ -117,7 +117,9 @@ bool ValidateUrl(const GURL& url) {
+ 
+   auto* policy = content::ChildProcessSecurityPolicy::GetInstance();
+   return policy->IsWebSafeScheme(url.scheme()) ||
+-         url.SchemeIs(url::kFileScheme) || url_scheme_is_chrome ||
++         url.SchemeIs(url::kFileScheme) ||
++         url.SchemeIs(content::kVeloxUIScheme) ||
++         url_scheme_is_chrome ||
+          url_points_to_an_approved_settings_page ||
+          url.spec() == url::kAboutBlankURL;
+ }
+@@ -173,6 +175,9 @@ StartupTabs StartupTabProviderImpl::GetDistributionFirstRunTabs(
+   StartupTabs tabs = GetInitialPrefsTabsForState(
+       first_run::IsChromeFirstRun(), browser_creator->first_run_tabs_);
+   browser_creator->first_run_tabs_.clear();
++  if (first_run::IsChromeFirstRun() && tabs.empty()) {
++    tabs.emplace_back(GURL(chrome::kVeloxUIWelcomeURL));
++  }
+   return tabs;
+ }
+ 
+diff --git a/chrome/browser/ui/webui/chrome_web_ui_configs.cc b/chrome/browser/ui/webui/chrome_web_ui_configs.cc
+index acc4db4ef2..57903bbc5c 100644
+--- a/chrome/browser/ui/webui/chrome_web_ui_configs.cc
++++ b/chrome/browser/ui/webui/chrome_web_ui_configs.cc
+@@ -46,12 +46,14 @@
+ #include "chrome/browser/ui/webui/translate_internals/translate_internals_ui.h"
+ #include "chrome/browser/ui/webui/usb_internals/usb_internals_ui.h"
+ #include "chrome/browser/ui/webui/user_actions/user_actions_ui.h"
++#include "chrome/browser/ui/webui/velox/velox_performance_ui.h"
+ #include "chrome/browser/ui/webui/version/version_ui.h"
+ #include "components/nacl/common/buildflags.h"
+ #include "components/safe_browsing/buildflags.h"
+ #include "components/security_interstitials/content/connection_help_ui.h"
+ #include "components/security_interstitials/content/known_interception_disclosure_ui.h"
+ #include "content/public/browser/webui_config_map.h"
++#include "chrome/browser/ui/webui/velox/velox_welcome_ui.h"
+ #include "extensions/buildflags/buildflags.h"
+ #include "printing/buildflags/buildflags.h"
+ 
+@@ -200,6 +202,7 @@ void RegisterChromeWebUIConfigs() {
+ #endif  // BUILDFLAG(IS_CHROMEOS)
+ 
+   auto& map = content::WebUIConfigMap::GetInstance();
++  map.AddWebUIConfig(std::make_unique<VeloxPerformanceUIConfig>());
+   map.AddWebUIConfig(std::make_unique<AccessibilityUIConfig>());
+   map.AddWebUIConfig(std::make_unique<AutofillInternalsUIConfig>());
+   map.AddWebUIConfig(std::make_unique<BluetoothInternalsUIConfig>());
+@@ -249,6 +252,7 @@ void RegisterChromeWebUIConfigs() {
+   map.AddWebUIConfig(std::make_unique<UsbInternalsUIConfig>());
+   map.AddWebUIConfig(std::make_unique<UserActionsUIConfig>());
+   map.AddWebUIConfig(std::make_unique<VersionUIConfig>());
++  map.AddWebUIConfig(std::make_unique<VeloxWelcomeUIConfig>());
+   map.AddWebUIConfig(std::make_unique<WebRtcLogsUIConfig>());
+   map.AddWebUIConfig(
+       std::make_unique<
+diff --git a/chrome/browser/ui/webui/velox/velox_welcome_ui.cc b/chrome/browser/ui/webui/velox/velox_welcome_ui.cc
+new file mode 100644
+index 0000000000..01d67da3e2
+--- /dev/null
++++ b/chrome/browser/ui/webui/velox/velox_welcome_ui.cc
+@@ -0,0 +1,342 @@
++// Copyright 2026 The VELOX Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/ui/webui/velox/velox_welcome_ui.h"
++
++#include <sstream>
++#include <string>
++#include <utility>
++
++#include "base/memory/raw_ptr.h"
++#include "base/memory/ref_counted_memory.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/common/webui_url_constants.h"
++#include "content/public/browser/browser_context.h"
++#include "content/public/browser/url_data_source.h"
++#include "content/public/browser/web_contents.h"
++#include "content/public/browser/web_ui.h"
++#include "content/public/common/url_constants.h"
++#include "url/gurl.h"
++
++namespace {
++
++class VeloxWelcomeHTMLSource : public content::URLDataSource {
++ public:
++  explicit VeloxWelcomeHTMLSource(Profile* profile) : profile_(profile) {}
++  ~VeloxWelcomeHTMLSource() override = default;
++
++  std::string GetSource() override {
++    return chrome::kVeloxUIWelcomeHost;
++  }
++
++  std::string GetMimeType(const GURL& url) override {
++    return "text/html";
++  }
++
++  bool ShouldServiceRequest(const GURL& url,
++                            content::BrowserContext* browser_context,
++                            int render_process_id) override {
++    return url.SchemeIs(content::kVeloxUIScheme) &&
++           url.host() == chrome::kVeloxUIWelcomeHost;
++  }
++
++  void StartDataRequest(
++      const GURL& url,
++      const content::WebContents::Getter& wc_getter,
++      content::URLDataSource::GotDataCallback callback) override {
++    std::ostringstream ss;
++    ss << "<!DOCTYPE html>\n<html lang='en'><head><meta charset='utf-8'>\n";
++    ss << "<title>Welcome to VELOX</title>\n";
++    ss << "<meta name='viewport' content='width=device-width, initial-scale=1'>\n";
++    ss << "<style>\n";
++    ss << "  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }\n";
++    ss << "  body {\n";
++    ss << "    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;\n";
++    ss << "    background: #090b10;\n";
++    ss << "    color: #f1f5f9;\n";
++    ss << "    min-height: 100vh;\n";
++    ss << "    display: flex;\n";
++    ss << "    flex-direction: column;\n";
++    ss << "    align-items: center;\n";
++    ss << "    padding: 48px 24px;\n";
++    ss << "    overflow-x: hidden;\n";
++    ss << "  }\n";
++    ss << "  .container { max-width: 960px; width: 100%; display: flex; flex-direction: column; align-items: center; text-align: center; }\n";
++    ss << "  .hero { margin-bottom: 48px; display: flex; flex-direction: column; align-items: center; }\n";
++    ss << "  .logo-icon {\n";
++    ss << "    width: 80px;\n";
++    ss << "    height: 80px;\n";
++    ss << "    margin-bottom: 20px;\n";
++    ss << "    filter: drop-shadow(0 0 25px rgba(56, 189, 248, 0.45));\n";
++    ss << "  }\n";
++    ss << "  h1 {\n";
++    ss << "    font-size: 42px;\n";
++    ss << "    font-weight: 900;\n";
++    ss << "    letter-spacing: 2px;\n";
++    ss << "    background: linear-gradient(135deg, #38bdf8 0%, #818cf8 100%);\n";
++    ss << "    -webkit-background-clip: text;\n";
++    ss << "    -webkit-text-fill-color: transparent;\n";
++    ss << "    margin-bottom: 12px;\n";
++    ss << "    text-transform: uppercase;\n";
++    ss << "  }\n";
++    ss << "  .tagline {\n";
++    ss << "    font-size: 18px;\n";
++    ss << "    color: #94a3b8;\n";
++    ss << "    max-width: 640px;\n";
++    ss << "    line-height: 1.6;\n";
++    ss << "  }\n";
++    ss << "  .grid {\n";
++    ss << "    display: grid;\n";
++    ss << "    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));\n";
++    ss << "    gap: 24px;\n";
++    ss << "    width: 100%;\n";
++    ss << "    margin-bottom: 48px;\n";
++    ss << "  }\n";
++    ss << "  .card {\n";
++    ss << "    background: #11141d;\n";
++    ss << "    border: 1px solid #1e293b;\n";
++    ss << "    border-radius: 16px;\n";
++    ss << "    padding: 32px 24px;\n";
++    ss << "    display: flex;\n";
++    ss << "    flex-direction: column;\n";
++    ss << "    align-items: center;\n";
++    ss << "    text-align: center;\n";
++    ss << "    transition: transform 0.2s ease, border-color 0.2s ease;\n";
++    ss << "  }\n";
++    ss << "  .card:hover {\n";
++    ss << "    transform: translateY(-4px);\n";
++    ss << "    border-color: #38bdf8;\n";
++    ss << "  }\n";
++    ss << "  .card-icon {\n";
++    ss << "    width: 48px;\n";
++    ss << "    height: 48px;\n";
++    ss << "    margin-bottom: 16px;\n";
++    ss << "    display: flex;\n";
++    ss << "    align-items: center;\n";
++    ss << "    justify-content: center;\n";
++    ss << "    border-radius: 12px;\n";
++    ss << "    background: #1e293b;\n";
++    ss << "    color: #38bdf8;\n";
++    ss << "    font-size: 24px;\n";
++    ss << "  }\n";
++    ss << "  .card h2 {\n";
++    ss << "    font-size: 20px;\n";
++    ss << "    font-weight: 700;\n";
++    ss << "    color: #f8fafc;\n";
++    ss << "    margin-bottom: 10px;\n";
++    ss << "  }\n";
++    ss << "  .card p {\n";
++    ss << "    font-size: 14px;\n";
++    ss << "    color: #94a3b8;\n";
++    ss << "    line-height: 1.6;\n";
++    ss << "    margin-bottom: 20px;\n";
++    ss << "    flex-grow: 1;\n";
++    ss << "  }\n";
++    ss << "  .badge {\n";
++    ss << "    display: inline-block;\n";
++    ss << "    padding: 4px 12px;\n";
++    ss << "    border-radius: 9999px;\n";
++    ss << "    font-size: 12px;\n";
++    ss << "    font-weight: 600;\n";
++    ss << "    margin-bottom: 16px;\n";
++    ss << "  }\n";
++    ss << "  .badge-shield { background: #064e3b; color: #34d399; border: 1px solid #059669; }\n";
++    ss << "  .badge-speed { background: #0c4a6e; color: #38bdf8; border: 1px solid #0284c7; }\n";
++    ss << "  .badge-search { background: #451a03; color: #fb923c; border: 1px solid #ea580c; }\n";
++    ss << "  .actions {\n";
++    ss << "    display: flex;\n";
++    ss << "    gap: 16px;\n";
++    ss << "    flex-wrap: wrap;\n";
++    ss << "    justify-content: center;\n";
++    ss << "    margin-bottom: 48px;\n";
++    ss << "  }\n";
++    ss << "  .btn {\n";
++    ss << "    display: inline-flex;\n";
++    ss << "    align-items: center;\n";
++    ss << "    justify-content: center;\n";
++    ss << "    padding: 12px 28px;\n";
++    ss << "    border-radius: 10px;\n";
++    ss << "    font-size: 15px;\n";
++    ss << "    font-weight: 600;\n";
++    ss << "    text-decoration: none;\n";
++    ss << "    cursor: pointer;\n";
++    ss << "    transition: all 0.2s ease;\n";
++    ss << "  }\n";
++    ss << "  .btn-primary {\n";
++    ss << "    background: linear-gradient(135deg, #38bdf8 0%, #6366f1 100%);\n";
++    ss << "    color: #ffffff;\n";
++    ss << "    box-shadow: 0 4px 14px rgba(56, 189, 248, 0.35);\n";
++    ss << "  }\n";
++    ss << "  .btn-primary:hover {\n";
++    ss << "    transform: translateY(-2px);\n";
++    ss << "    box-shadow: 0 6px 20px rgba(56, 189, 248, 0.45);\n";
++    ss << "  }\n";
++    ss << "  .btn-secondary {\n";
++    ss << "    background: #1e293b;\n";
++    ss << "    color: #e2e8f0;\n";
++    ss << "    font-size: 13px;\n";
++    ss << "    padding: 8px 16px;\n";
++    ss << "  }\n";
++    ss << "  .btn-secondary:hover {\n";
++    ss << "    background: #334155;\n";
++    ss << "    color: #ffffff;\n";
++    ss << "  }\n";
++    ss << "  .btn-outline {\n";
++    ss << "    border: 1px solid #334155;\n";
++    ss << "    color: #94a3b8;\n";
++    ss << "  }\n";
++    ss << "  .btn-outline:hover {\n";
++    ss << "    border-color: #64748b;\n";
++    ss << "    color: #f8fafc;\n";
++    ss << "  }\n";
++    ss << "  .transfer-banner {\n";
++    ss << "    width: 100%;\n";
++    ss << "    background: linear-gradient(135deg, rgba(56, 189, 248, 0.12) 0%, rgba(99, 102, 241, 0.15) 100%);\n";
++    ss << "    border: 1px solid rgba(56, 189, 248, 0.4);\n";
++    ss << "    border-radius: 16px;\n";
++    ss << "    padding: 24px 32px;\n";
++    ss << "    display: flex;\n";
++    ss << "    align-items: center;\n";
++    ss << "    justify-content: space-between;\n";
++    ss << "    gap: 24px;\n";
++    ss << "    margin-bottom: 40px;\n";
++    ss << "    text-align: left;\n";
++    ss << "    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);\n";
++    ss << "  }\n";
++    ss << "  .transfer-info { display: flex; flex-direction: column; gap: 6px; }\n";
++    ss << "  .transfer-badge {\n";
++    ss << "    display: inline-block;\n";
++    ss << "    align-self: flex-start;\n";
++    ss << "    padding: 3px 10px;\n";
++    ss << "    border-radius: 9999px;\n";
++    ss << "    font-size: 11px;\n";
++    ss << "    font-weight: 700;\n";
++    ss << "    text-transform: uppercase;\n";
++    ss << "    letter-spacing: 0.5px;\n";
++    ss << "    background: #0369a1;\n";
++    ss << "    color: #e0f2fe;\n";
++    ss << "    border: 1px solid #38bdf8;\n";
++    ss << "  }\n";
++    ss << "  .btn-import {\n";
++    ss << "    background: linear-gradient(135deg, #0284c7 0%, #6366f1 100%);\n";
++    ss << "    color: #ffffff;\n";
++    ss << "    font-weight: 700;\n";
++    ss << "    padding: 12px 24px;\n";
++    ss << "    border-radius: 10px;\n";
++    ss << "    white-space: nowrap;\n";
++    ss << "    text-decoration: none;\n";
++    ss << "    box-shadow: 0 4px 16px rgba(2, 132, 199, 0.4);\n";
++    ss << "    transition: all 0.2s ease;\n";
++    ss << "    display: inline-flex;\n";
++    ss << "    align-items: center;\n";
++    ss << "    gap: 8px;\n";
++    ss << "  }\n";
++    ss << "  .btn-import:hover {\n";
++    ss << "    transform: translateY(-2px);\n";
++    ss << "    box-shadow: 0 6px 24px rgba(56, 189, 248, 0.5);\n";
++    ss << "  }\n";
++    ss << "  @media (max-width: 720px) {\n";
++    ss << "    .transfer-banner { flex-direction: column; align-items: flex-start; padding: 20px; }\n";
++    ss << "    .btn-import { width: 100%; justify-content: center; }\n";
++    ss << "  }\n";
++    ss << "  .footer {\n";
++    ss << "    border-top: 1px solid #1e293b;\n";
++    ss << "    padding-top: 24px;\n";
++    ss << "    color: #64748b;\n";
++    ss << "    font-size: 13px;\n";
++    ss << "  }\n";
++    ss << "</style></head><body>\n";
++
++    ss << "<div class='container'>\n";
++    
++    // Hero Header
++    ss << "  <div class='hero'>\n";
++    ss << "    <svg class='logo-icon' viewBox='0 0 64 64' fill='none' xmlns='http://www.w3.org/2000/svg'>\n";
++    ss << "      <path d='M32 4L6 54L32 44L58 54L32 4Z' fill='url(#grad1)'/>\n";
++    ss << "      <defs>\n";
++    ss << "        <linearGradient id='grad1' x1='6' y1='4' x2='58' y2='54' gradientUnits='userSpaceOnUse'>\n";
++    ss << "          <stop stop-color='#38bdf8'/>\n";
++    ss << "          <stop offset='1' stop-color='#818cf8'/>\n";
++    ss << "        </linearGradient>\n";
++    ss << "      </defs>\n";
++    ss << "    </svg>\n";
++    ss << "    <h1>Welcome to VELOX</h1>\n";
++    ss << "    <p class='tagline'>Engineered for supersonic web navigation, aggressive memory conservation, and uncompromising origin privacy.</p>\n";
++    ss << "  </div>\n";
++
++    // Quick Data & Tab Transfer Migration Banner
++    ss << "  <div class='transfer-banner'>\n";
++    ss << "    <div class='transfer-info'>\n";
++    ss << "      <span class='transfer-badge'>Easy Migration</span>\n";
++    ss << "      <h2 style='font-size: 20px; font-weight: 700; color: #f8fafc; margin-top: 4px;'>Switching from Chrome, Edge, Brave, or Firefox?</h2>\n";
++    ss << "      <p style='font-size: 14px; color: #94a3b8; line-height: 1.5;'>Transfer your open tabs, bookmarks, browsing history, saved passwords, and autofill into VELOX in 1 click.</p>\n";
++    ss << "    </div>\n";
++    ss << "    <a href='chrome://settings/importData' class='btn btn-import'>\xf0\x9f\x93\xa6 Transfer Data &amp; Tabs &rarr;</a>\n";
++    ss << "  </div>\n";
++
++    // 3 Highlight Feature Cards
++    ss << "  <div class='grid'>\n";
++    
++    // Card 1: Speed & RAM
++    ss << "    <div class='card'>\n";
++    ss << "      <span class='badge badge-speed'>605 MB Baseline WS (-15%)</span>\n";
++    ss << "      <h2>Supersonic Memory</h2>\n";
++    ss << "      <p>Proactive memory management with aggressive 5-minute background tab discarding, zero idle spare processes, and instant tab reactivation.</p>\n";
++    ss << "      <a href='velox://performance' class='btn btn-secondary'>Open Resource Center &rarr;</a>\n";
++    ss << "    </div>\n";
++
++    // Card 2: Privacy Shield
++    ss << "    <div class='card'>\n";
++    ss << "      <span class='badge badge-shield'>Shield Active</span>\n";
++    ss << "      <h2>Native Privacy Shield</h2>\n";
++    ss << "      <p>Automated network-level blocking of invasive trackers and ads, plus 1-bit Canvas &amp; WebGL entropy randomization to eliminate device fingerprinting.</p>\n";
++    ss << "      <span style='font-size:12px;color:#64748b;'>Protected by VeloxShield</span>\n";
++    ss << "    </div>\n";
++
++    // Card 3: Privacy Search
++    ss << "    <div class='card'>\n";
++    ss << "      <span class='badge badge-search'>DuckDuckGo Default</span>\n";
++    ss << "      <h2>Private Search</h2>\n";
++    ss << "      <p>DuckDuckGo is your default search engine. Zero search query logging, no targeted ad tracking, and pure unbiased results on every query.</p>\n";
++    ss << "      <a href='chrome://settings/search' class='btn btn-secondary'>Search Settings &rarr;</a>\n";
++    ss << "    </div>\n";
++
++    ss << "  </div>\n";
++
++    // Action CTA
++    ss << "  <div class='actions'>\n";
++    ss << "    <a href='chrome://settings/importData' class='btn btn-import'>\xf0\x9f\x93\xa6 Transfer Data &amp; Tabs</a>\n";
++    ss << "    <a href='https://duckduckgo.com' class='btn btn-primary'>Start Browsing Now</a>\n";
++    ss << "    <a href='chrome://settings' class='btn btn-outline'>Customize Settings</a>\n";
++    ss << "  </div>\n";
++
++    // Footer
++    ss << "  <div class='footer'>\n";
++    ss << "    VELOX Desktop Browser &bull; High-Performance, Privacy-First Architecture &bull; 2026\n";
++    ss << "  </div>\n";
++
++    ss << "</div>\n";
++    ss << "</body></html>\n";
++
++    std::move(callback).Run(base::MakeRefCounted<base::RefCountedString>(ss.str()));
++  }
++
++ private:
++  raw_ptr<Profile> profile_;
++};
++
++}  // namespace
++
++VeloxWelcomeUIConfig::VeloxWelcomeUIConfig()
++    : DefaultWebUIConfig(content::kVeloxUIScheme,
++                         chrome::kVeloxUIWelcomeHost) {}
++
++VeloxWelcomeUI::VeloxWelcomeUI(content::WebUI* web_ui)
++    : content::WebUIController(web_ui) {
++  Profile* profile = Profile::FromWebUI(web_ui);
++  content::URLDataSource::Add(
++      profile, std::make_unique<VeloxWelcomeHTMLSource>(profile));
++}
++
++VeloxWelcomeUI::~VeloxWelcomeUI() = default;
+diff --git a/chrome/browser/ui/webui/velox/velox_welcome_ui.h b/chrome/browser/ui/webui/velox/velox_welcome_ui.h
+new file mode 100644
+index 0000000000..1514b316fb
+--- /dev/null
++++ b/chrome/browser/ui/webui/velox/velox_welcome_ui.h
+@@ -0,0 +1,32 @@
++// Copyright 2026 The VELOX Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_WEBUI_VELOX_VELOX_WELCOME_UI_H_
++#define CHROME_BROWSER_UI_WEBUI_VELOX_VELOX_WELCOME_UI_H_
++
++#include <memory>
++#include <string>
++
++#include "content/public/browser/web_ui_controller.h"
++#include "content/public/browser/webui_config.h"
++
++class VeloxWelcomeUI;
++
++// WebUIConfig for velox://welcome
++class VeloxWelcomeUIConfig
++    : public content::DefaultWebUIConfig<VeloxWelcomeUI> {
++ public:
++  VeloxWelcomeUIConfig();
++};
++
++// The WebUIController for velox://welcome
++class VeloxWelcomeUI : public content::WebUIController {
++ public:
++  explicit VeloxWelcomeUI(content::WebUI* web_ui);
++  VeloxWelcomeUI(const VeloxWelcomeUI&) = delete;
++  VeloxWelcomeUI& operator=(const VeloxWelcomeUI&) = delete;
++  ~VeloxWelcomeUI() override;
++};
++
++#endif  // CHROME_BROWSER_UI_WEBUI_VELOX_VELOX_WELCOME_UI_H_
+diff --git a/chrome/common/webui_url_constants.h b/chrome/common/webui_url_constants.h
+index ff691df3c5..b68925af18 100644
+--- a/chrome/common/webui_url_constants.h
++++ b/chrome/common/webui_url_constants.h
+@@ -30,6 +30,10 @@ namespace chrome {
+ // Not all components have corresponding URLs and vice versa. Only add as
+ // needed.
+ // Please keep in alphabetical order, with OS/feature specific sections below.
++// VELOX WebUI constants.
++inline constexpr char kVeloxUIPerformanceHost[] = "performance";
++inline constexpr char kVeloxUIPerformanceURL[] = "velox://performance/";
++
+ inline constexpr char kChromeUIAboutHost[] = "about";
+ inline constexpr char kChromeUIAboutURL[] = "chrome://about/";
+ inline constexpr char kChromeUIAccessCodeCastHost[] = "access-code-cast";
+@@ -524,6 +528,8 @@ inline constexpr char kChromeUIWebAppSettingsHost[] = "app-settings";
+ inline constexpr char kChromeUIWebAppSettingsURL[] = "chrome://app-settings/";
+ inline constexpr char kChromeUIWhatsNewHost[] = "whats-new";
+ inline constexpr char kChromeUIWhatsNewURL[] = "chrome://whats-new/";
++inline constexpr char kVeloxUIWelcomeHost[] = "welcome";
++inline constexpr char kVeloxUIWelcomeURL[] = "velox://welcome/";
+ #endif
+ 
+ #if BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_ANDROID)

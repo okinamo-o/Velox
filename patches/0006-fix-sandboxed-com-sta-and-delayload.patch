@@ -1,0 +1,127 @@
+From 0000000000000000000000000000000000000006 Mon Sep 17 00:00:00 2001
+From: Velox Engine Team <core@velox-browser.org>
+Date: Sat, 26 Sep 2026 23:20:00 +0100
+Subject: [PATCH 0006] Fix sandboxed subprocess COM STA and ole32 delay-load failure
+
+In Windows AppContainer sandboxes (such as the Network Service) and Win32k
+lockdown environments, USER32.dll and GDI32.dll cannot be loaded because
+they lack the desktop window station capability.
+
+This patch addresses two failure modes:
+1. ole32.dll statically imports USER32.dll, causing delay-load resolution
+   to fail with ERROR_INTERNAL_ERROR (1359). When User32/Gdi32 is unavailable,
+   the delay load notify hook dynamically redirects ole32.dll requests to
+   combase.dll, which exports core COM APIs without USER32.
+2. NetworkCostChangeNotifierWin::CreateInstance spawns a COM STA task runner.
+   Single-Threaded Apartments require a Win32 message window, which cannot
+   initialize in an AppContainer, triggering NOTREACHED() in WorkerThreadCOMDelegate.
+   Guard CreateInstance to avoid spawning STA task runners when User32/Gdi32
+   is unavailable, and prevent WorkerThreadCOMDelegate from aborting on failed
+   STA initialization in sandboxed subprocesses.
+
+---
+ base/task/thread_pool/pooled_single_thread_task_runner_manager.cc | 3 ++-
+ chrome/common/win/delay_load_failure_support.cc                    | 4 ++++
+ chrome/common/win/delay_load_notify_hook.cc                       | 18 ++++++++++++++++++
+ net/base/network_cost_change_notifier_win.cc                      | 7 +++++++
+ 4 files changed, 31 insertions(+), 1 deletion(-)
+
+diff --git a/base/task/thread_pool/pooled_single_thread_task_runner_manager.cc b/base/task/thread_pool/pooled_single_thread_task_runner_manager.cc
+index 1290d0ad95..251db1439f 100644
+--- a/base/task/thread_pool/pooled_single_thread_task_runner_manager.cc
++++ b/base/task/thread_pool/pooled_single_thread_task_runner_manager.cc
+@@ -43,6 +43,7 @@
+ 
+ #include "base/debug/crash_logging.h"
+ #include "base/win/scoped_com_initializer.h"
++#include "base/win/win_util.h"
+ #endif  // BUILDFLAG(IS_WIN)
+ 
+ namespace base::internal {
+@@ -339,7 +340,9 @@ class WorkerThreadCOMDelegate : public WorkerThreadDelegate {
+       // https://crbug.com/40074523.
+       SCOPED_CRASH_KEY_NUMBER("WorkerThreadCOMDelegate", "hr",
+                               scoped_com_initializer_->hr());
+-      NOTREACHED();
++      if (win::IsUser32AndGdi32Available()) {
++        NOTREACHED();
++      }
+     }
+   }
+ 
+diff --git a/chrome/common/win/delay_load_failure_support.cc b/chrome/common/win/delay_load_failure_support.cc
+index e9df534f0d..9acd3311b7 100644
+--- a/chrome/common/win/delay_load_failure_support.cc
++++ b/chrome/common/win/delay_load_failure_support.cc
+@@ -26,6 +26,10 @@ FARPROC WINAPI HandleDelayLoadFailureCommon(unsigned reason,
+   DEBUG_ALIAS_FOR_CSTR(dll_name, dll_info->szDll, 256);
+   SCOPED_CRASH_KEY_STRING256("DelayLoad", "ModuleName", dll_name);
+   SCOPED_CRASH_KEY_NUMBER("DelayLoad", "LastError", dll_info->dwLastError);
++  const char* proc = (dll_info->dlp.fImportByName && dll_info->dlp.szProcName)
++                         ? dll_info->dlp.szProcName
++                         : "<ordinal>";
++  SCOPED_CRASH_KEY_STRING256("DelayLoad", "ProcName", proc);
+ 
+   // Deterministically crash here. Returning 0 from the hook would likely result
+   // in the process crashing anyway, but in a form that might trigger undefined
+diff --git a/chrome/common/win/delay_load_notify_hook.cc b/chrome/common/win/delay_load_notify_hook.cc
+index c720bebd5e..900245f772 100644
+--- a/chrome/common/win/delay_load_notify_hook.cc
++++ b/chrome/common/win/delay_load_notify_hook.cc
+@@ -6,6 +6,9 @@
+ 
+ #include <atomic>
+ 
++#include "base/strings/string_util.h"
++#include "base/win/win_util.h"
++
+ namespace chrome {
+ 
+ namespace {
+@@ -17,6 +20,21 @@ std::atomic<DelayLoadCallbackFunction> g_delay_load_callback_function(nullptr);
+ // using |SetDelayLoadHookCallback|. More details on usage in
+ // delay_load_notify_hook.h
+ FARPROC WINAPI DelayLoadNotifyHook(unsigned dliNotify, PDelayLoadInfo pdli) {
++  // Sandboxed processes (AppContainer or Win32k lockdown) cannot load USER32.dll.
++  // ole32.dll statically depends on USER32.dll, causing LoadLibrary("ole32.dll") to fail.
++  // When User32/Gdi32 is unavailable, redirect ole32.dll to combase.dll which exports
++  // core COM APIs (CoInitializeEx, CoCreateInstance, CoTaskMemAlloc, etc.) without USER32.
++  if (dliNotify == dliNotePreLoadLibrary && pdli && pdli->szDll) {
++    if (base::CompareCaseInsensitiveASCII(pdli->szDll, "ole32.dll") == 0) {
++      if (!base::win::IsUser32AndGdi32Available()) {
++        HMODULE hComBase = ::LoadLibraryA("combase.dll");
++        if (hComBase) {
++          return reinterpret_cast<FARPROC>(hComBase);
++        }
++      }
++    }
++  }
++
+   DelayLoadCallbackFunction callback =
+       g_delay_load_callback_function.load(std::memory_order_acquire);
+   if (!callback) {
+diff --git a/net/base/network_cost_change_notifier_win.cc b/net/base/network_cost_change_notifier_win.cc
+index 79aaacf6c7..3050eaa07b 100644
+--- a/net/base/network_cost_change_notifier_win.cc
++++ b/net/base/network_cost_change_notifier_win.cc
+@@ -14,6 +14,7 @@
+ #include "base/task/thread_pool.h"
+ #include "base/threading/scoped_thread_priority.h"
+ #include "base/win/com_init_util.h"
++#include "base/win/win_util.h"
+ 
+ using Microsoft::WRL::ComPtr;
+ 
+@@ -154,6 +155,12 @@ class NetworkCostManagerEventSinkWin final
+ base::SequenceBound<NetworkCostChangeNotifierWin>
+ NetworkCostChangeNotifierWin::CreateInstance(
+     CostChangedCallback cost_changed_callback) {
++  // In sandboxed processes (e.g. AppContainer or Win32k lockdown), User32/Gdi32 is unavailable,
++  // preventing COM STA initialization. Do not spin up an STA task runner in such processes.
++  if (!base::win::IsUser32AndGdi32Available()) {
++    return base::SequenceBound<NetworkCostChangeNotifierWin>();
++  }
++
+   scoped_refptr<base::SequencedTaskRunner> com_best_effort_task_runner =
+       base::ThreadPool::CreateCOMSTATaskRunner(
+           {base::MayBlock(), base::TaskPriority::BEST_EFFORT,

@@ -1,0 +1,84 @@
+diff --git a/chrome/browser/performance_manager/policies/memory_saver_mode_policy.cc b/chrome/browser/performance_manager/policies/memory_saver_mode_policy.cc
+index 1066819efb..6524ab4e9a 100644
+--- a/chrome/browser/performance_manager/policies/memory_saver_mode_policy.cc
++++ b/chrome/browser/performance_manager/policies/memory_saver_mode_policy.cc
+@@ -203,11 +203,11 @@ base::TimeDelta MemorySaverModePolicy::GetTimeBeforeDiscardForCurrentMode()
+     const {
+   switch (mode_) {
+     case MemorySaverModeAggressiveness::kConservative:
+-      return base::Hours(6);
++      return base::Minutes(30);
+     case MemorySaverModeAggressiveness::kMedium:
+-      return base::Hours(4);
++      return base::Minutes(15);
+     case MemorySaverModeAggressiveness::kAggressive:
+-      return base::Hours(2);
++      return base::Minutes(5);
+   }
+   NOTREACHED();
+ }
+diff --git a/chrome/browser/resource_coordinator/tab_lifecycle_unit.h b/chrome/browser/resource_coordinator/tab_lifecycle_unit.h
+index ec5b5b52b9..095fa622ea 100644
+--- a/chrome/browser/resource_coordinator/tab_lifecycle_unit.h
++++ b/chrome/browser/resource_coordinator/tab_lifecycle_unit.h
+@@ -30,7 +30,7 @@ class TabLifecycleObserver;
+ // Time during which backgrounded tabs are protected from urgent discarding
+ // (not on ChromeOS).
+ static constexpr base::TimeDelta kBackgroundUrgentProtectionTime =
+-    base::Minutes(10);
++    base::Minutes(2);
+ 
+ // Time during which a tab cannot be discarded after having played audio.
+ static constexpr base::TimeDelta kTabAudioProtectionTime = base::Minutes(1);
+diff --git a/components/performance_manager/user_tuning/prefs.cc b/components/performance_manager/user_tuning/prefs.cc
+index 3a1b8b9916..35a6ffedfc 100644
+--- a/components/performance_manager/user_tuning/prefs.cc
++++ b/components/performance_manager/user_tuning/prefs.cc
+@@ -20,15 +20,15 @@
+ namespace performance_manager::user_tuning::prefs {
+ 
+ void RegisterLocalStatePrefs(PrefRegistrySimple* registry) {
+-  registry->RegisterBooleanPref(kMemorySaverModeEnabled, false);
++  registry->RegisterBooleanPref(kMemorySaverModeEnabled, true);
+   registry->RegisterIntegerPref(
+       kMemorySaverModeTimeBeforeDiscardInMinutes,
+-      kDefaultMemorySaverModeTimeBeforeDiscardInMinutes);
++      15);
+   registry->RegisterIntegerPref(
+-      kMemorySaverModeState, static_cast<int>(MemorySaverModeState::kDisabled));
++      kMemorySaverModeState, static_cast<int>(MemorySaverModeState::kEnabled));
+   registry->RegisterIntegerPref(
+       kMemorySaverModeAggressiveness,
+-      static_cast<int>(MemorySaverModeAggressiveness::kMedium));
++      static_cast<int>(MemorySaverModeAggressiveness::kAggressive));
+   registry->RegisterIntegerPref(
+       kBatterySaverModeState,
+       static_cast<int>(BatterySaverModeState::kEnabledBelowThreshold));
+diff --git a/content/public/common/content_features.cc b/content/public/common/content_features.cc
+index 25120ac683..d1fb09aee7 100644
+--- a/content/public/common/content_features.cc
++++ b/content/public/common/content_features.cc
+@@ -1070,7 +1070,7 @@ BASE_FEATURE(kDisableProcessReuse,
+ // This feature is only consulted in site-per-process mode.
+ BASE_FEATURE(kSpareRendererForSitePerProcess,
+              "SpareRendererForSitePerProcess",
+-             base::FEATURE_ENABLED_BY_DEFAULT);
++             base::FEATURE_DISABLED_BY_DEFAULT);
+ 
+ // Controls whether site isolation should use origins instead of scheme and
+ // eTLD+1.
+diff --git a/content/renderer/render_thread_impl.cc b/content/renderer/render_thread_impl.cc
+index beb2d175d2..05a120b51a 100644
+--- a/content/renderer/render_thread_impl.cc
++++ b/content/renderer/render_thread_impl.cc
+@@ -1649,7 +1649,9 @@ void RenderThreadImpl::OnMemoryPressure(
+   if (blink_platform_impl_)
+     blink::WebMemoryPressureListener::OnMemoryPressure(memory_pressure_level);
+   if (memory_pressure_level ==
+-      base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_CRITICAL) {
++          base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_CRITICAL ||
++      memory_pressure_level ==
++          base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_MODERATE) {
+     discardable_memory_allocator_->ReleaseFreeMemory();
+ 
+     // Do not call into blink if it is not initialized.

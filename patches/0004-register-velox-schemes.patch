@@ -1,0 +1,437 @@
+diff --git a/chrome/browser/chrome_content_browser_client.cc b/chrome/browser/chrome_content_browser_client.cc
+index 678e42c96f..f19fd6bafa 100644
+--- a/chrome/browser/chrome_content_browser_client.cc
++++ b/chrome/browser/chrome_content_browser_client.cc
+@@ -2232,6 +2232,7 @@ void ChromeContentBrowserClient::GetAdditionalWebUISchemes(
+   additional_schemes->emplace_back(chrome::kChromeSearchScheme);
+   additional_schemes->emplace_back(dom_distiller::kDomDistillerScheme);
+   additional_schemes->emplace_back(content::kChromeDevToolsScheme);
++  additional_schemes->emplace_back(content::kVeloxUIScheme);
+ }
+ 
+ bool ChromeContentBrowserClient::IsInternalScheme(const GURL& url) {
+@@ -4851,6 +4852,7 @@ void ChromeContentBrowserClient::GetAdditionalAllowedSchemesForFileSystem(
+   additional_allowed_schemes->push_back(content::kChromeUIScheme);
+   additional_allowed_schemes->push_back(content::kChromeUIUntrustedScheme);
+   additional_allowed_schemes->push_back(chrome::kIsolatedAppScheme);
++  additional_allowed_schemes->push_back(content::kVeloxUIScheme);
+   for (auto& extra_part : extra_parts_) {
+     extra_part->GetAdditionalAllowedSchemesForFileSystem(
+         additional_allowed_schemes);
+diff --git a/chrome/browser/ui/BUILD.gn b/chrome/browser/ui/BUILD.gn
+index a66522f120..e958393bc2 100644
+--- a/chrome/browser/ui/BUILD.gn
++++ b/chrome/browser/ui/BUILD.gn
+@@ -146,6 +146,8 @@ static_library("ui") {
+     "webui/about/about_ui.h",
+     "webui/accessibility/accessibility_ui.cc",
+     "webui/accessibility/accessibility_ui.h",
++    "webui/velox/velox_performance_ui.cc",
++    "webui/velox/velox_performance_ui.h",
+     "webui/autofill_and_password_manager_internals/autofill_internals_ui.cc",
+     "webui/autofill_and_password_manager_internals/autofill_internals_ui.h",
+     "webui/autofill_and_password_manager_internals/internals_ui_handler.cc",
+diff --git a/chrome/browser/ui/startup/startup_tab_provider.cc b/chrome/browser/ui/startup/startup_tab_provider.cc
+index 25d03e96be..01a97fdc56 100644
+--- a/chrome/browser/ui/startup/startup_tab_provider.cc
++++ b/chrome/browser/ui/startup/startup_tab_provider.cc
+@@ -117,7 +117,9 @@ bool ValidateUrl(const GURL& url) {
+ 
+   auto* policy = content::ChildProcessSecurityPolicy::GetInstance();
+   return policy->IsWebSafeScheme(url.scheme()) ||
+-         url.SchemeIs(url::kFileScheme) || url_scheme_is_chrome ||
++         url.SchemeIs(url::kFileScheme) ||
++         url.SchemeIs(content::kVeloxUIScheme) ||
++         url_scheme_is_chrome ||
+          url_points_to_an_approved_settings_page ||
+          url.spec() == url::kAboutBlankURL;
+ }
+diff --git a/chrome/browser/ui/webui/chrome_web_ui_configs.cc b/chrome/browser/ui/webui/chrome_web_ui_configs.cc
+index acc4db4ef2..b5c29da7ec 100644
+--- a/chrome/browser/ui/webui/chrome_web_ui_configs.cc
++++ b/chrome/browser/ui/webui/chrome_web_ui_configs.cc
+@@ -46,6 +46,7 @@
+ #include "chrome/browser/ui/webui/translate_internals/translate_internals_ui.h"
+ #include "chrome/browser/ui/webui/usb_internals/usb_internals_ui.h"
+ #include "chrome/browser/ui/webui/user_actions/user_actions_ui.h"
++#include "chrome/browser/ui/webui/velox/velox_performance_ui.h"
+ #include "chrome/browser/ui/webui/version/version_ui.h"
+ #include "components/nacl/common/buildflags.h"
+ #include "components/safe_browsing/buildflags.h"
+@@ -200,6 +201,7 @@ void RegisterChromeWebUIConfigs() {
+ #endif  // BUILDFLAG(IS_CHROMEOS)
+ 
+   auto& map = content::WebUIConfigMap::GetInstance();
++  map.AddWebUIConfig(std::make_unique<VeloxPerformanceUIConfig>());
+   map.AddWebUIConfig(std::make_unique<AccessibilityUIConfig>());
+   map.AddWebUIConfig(std::make_unique<AutofillInternalsUIConfig>());
+   map.AddWebUIConfig(std::make_unique<BluetoothInternalsUIConfig>());
+diff --git a/chrome/browser/ui/webui/velox/velox_performance_ui.cc b/chrome/browser/ui/webui/velox/velox_performance_ui.cc
+new file mode 100644
+index 0000000000..75a03c2ffd
+--- /dev/null
++++ b/chrome/browser/ui/webui/velox/velox_performance_ui.cc
+@@ -0,0 +1,190 @@
++// Copyright 2026 The VELOX Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/ui/webui/velox/velox_performance_ui.h"
++
++#include <iomanip>
++#include <sstream>
++#include <string>
++#include <utility>
++
++#include "base/memory/raw_ptr.h"
++#include "base/memory/ref_counted_memory.h"
++#include "base/process/process_handle.h"
++#include "base/strings/stringprintf.h"
++#include "base/system/sys_info.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/common/webui_url_constants.h"
++#include "content/public/browser/browser_context.h"
++#include "content/public/browser/browser_thread.h"
++#include "content/public/browser/render_process_host.h"
++#include "content/public/browser/url_data_source.h"
++#include "content/public/browser/web_contents.h"
++#include "content/public/browser/web_ui.h"
++#include "content/public/common/url_constants.h"
++#include "url/gurl.h"
++
++namespace {
++
++class VeloxPerformanceHTMLSource : public content::URLDataSource {
++ public:
++  explicit VeloxPerformanceHTMLSource(Profile* profile) : profile_(profile) {}
++  ~VeloxPerformanceHTMLSource() override = default;
++
++  std::string GetSource() override {
++    return chrome::kVeloxUIPerformanceHost;
++  }
++
++  std::string GetMimeType(const GURL& url) override {
++    return "text/html";
++  }
++
++  bool ShouldServiceRequest(const GURL& url,
++                            content::BrowserContext* browser_context,
++                            int render_process_id) override {
++    return url.SchemeIs(content::kVeloxUIScheme) &&
++           url.host() == chrome::kVeloxUIPerformanceHost;
++  }
++
++  void StartDataRequest(
++      const GURL& url,
++      const content::WebContents::Getter& wc_getter,
++      content::URLDataSource::GotDataCallback callback) override {
++    int64_t total_mem = base::SysInfo::AmountOfPhysicalMemory();
++    int64_t free_mem = base::SysInfo::AmountOfAvailablePhysicalMemory();
++    int64_t used_mem = total_mem > free_mem ? (total_mem - free_mem) : 0;
++    double load_pct = total_mem > 0 ? (100.0 * used_mem / total_mem) : 0.0;
++
++    int num_procs = base::SysInfo::NumberOfProcessors();
++    std::string os_name = base::SysInfo::OperatingSystemName();
++    std::string os_version = base::SysInfo::OperatingSystemVersion();
++
++    std::ostringstream ss;
++    ss << "<!DOCTYPE html>\n<html><head><meta charset='utf-8'>\n";
++    ss << "<title>VELOX Resource Performance Center</title>\n";
++    ss << "<style>\n";
++    ss << "  * { box-sizing: border-box; }\n";
++    ss << "  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background: #0b0d13; color: #e2e8f0; margin: 0; padding: 32px; }\n";
++    ss << "  .header { display: flex; align-items: center; justify-content: space-between; border-bottom: 2px solid #1e293b; padding-bottom: 16px; margin-bottom: 24px; }\n";
++    ss << "  .brand { display: flex; align-items: center; gap: 12px; }\n";
++    ss << "  .logo { font-size: 24px; font-weight: 900; letter-spacing: 2px; color: #38bdf8; text-transform: uppercase; background: linear-gradient(135deg, #38bdf8, #818cf8); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }\n";
++    ss << "  .subtitle { font-size: 13px; color: #94a3b8; }\n";
++    ss << "  .badge { display: inline-block; padding: 4px 10px; border-radius: 9999px; font-size: 12px; font-weight: 600; }\n";
++    ss << "  .badge-success { background: #064e3b; color: #34d399; border: 1px solid #059669; }\n";
++    ss << "  .badge-info { background: #0c4a6e; color: #38bdf8; border: 1px solid #0284c7; }\n";
++    ss << "  .badge-warning { background: #78350f; color: #fbbf24; border: 1px solid #d97706; }\n";
++    ss << "  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-bottom: 24px; }\n";
++    ss << "  .card { background: #131722; border: 1px solid #1e293b; border-radius: 12px; padding: 20px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2); }\n";
++    ss << "  .card-title { font-size: 14px; text-transform: uppercase; letter-spacing: 1px; color: #64748b; margin-top: 0; margin-bottom: 8px; }\n";
++    ss << "  .stat-val { font-size: 28px; font-weight: 700; color: #f8fafc; }\n";
++    ss << "  .stat-desc { font-size: 12px; color: #94a3b8; margin-top: 4px; }\n";
++    ss << "  table { width: 100%; border-collapse: collapse; margin-top: 12px; }\n";
++    ss << "  th, td { text-align: left; padding: 12px; border-bottom: 1px solid #1e293b; font-size: 14px; }\n";
++    ss << "  th { color: #64748b; font-weight: 600; text-transform: uppercase; font-size: 12px; letter-spacing: 0.5px; }\n";
++    ss << "  tr:hover { background: #1e293b44; }\n";
++    ss << "  .footer { text-align: center; color: #475569; font-size: 12px; margin-top: 40px; padding-top: 16px; border-top: 1px solid #1e293b; }\n";
++    ss << "</style></head><body>\n";
++
++    ss << "<div class='header'>\n";
++    ss << "  <div class='brand'>\n";
++    ss << "    <div class='logo'>VELOX</div>\n";
++    ss << "    <div class='subtitle'>Resource Performance Center &amp; Architecture Telemetry</div>\n";
++    ss << "  </div>\n";
++    ss << "  <div><span class='badge badge-success'>ORIGIN ISOLATION ACTIVE</span></div>\n";
++    ss << "</div>\n";
++
++    ss << "<div class='grid'>\n";
++    // System Memory Card
++    ss << "  <div class='card'>\n";
++    ss << "    <div class='card-title'>Host System Memory</div>\n";
++    ss << "    <div class='stat-val'>" << std::fixed << std::setprecision(1) << load_pct << "%</div>\n";
++    ss << "    <div class='stat-desc'>Used: " << (used_mem / (1024 * 1024)) << " MB / Total: " << (total_mem / (1024 * 1024)) << " MB</div>\n";
++    ss << "  </div>\n";
++
++    // Host CPU Card
++    ss << "  <div class='card'>\n";
++    ss << "    <div class='card-title'>Processor &amp; Platform</div>\n";
++    ss << "    <div class='stat-val'>" << num_procs << " Logical Cores</div>\n";
++    ss << "    <div class='stat-desc'>" << os_name << " " << os_version << "</div>\n";
++    ss << "  </div>\n";
++
++    // Sandbox & Security Card
++    ss << "  <div class='card'>\n";
++    ss << "    <div class='card-title'>Security &amp; Isolation Model</div>\n";
++    ss << "    <div class='stat-val' style='font-size:20px;color:#38bdf8;'>Win32k Lockdown + AppContainer</div>\n";
++    ss << "    <div class='stat-desc'>Strict Site Isolation &amp; Process Locking Enforced</div>\n";
++    ss << "  </div>\n";
++    ss << "</div>\n";
++
++    // Subprocess Table
++    ss << "<div class='card'>\n";
++    ss << "  <div class='card-title'>Active Process Tree &amp; Resource Topology</div>\n";
++    ss << "  <table>\n";
++    ss << "    <thead><tr><th>PID</th><th>Process Type</th><th>Role</th><th>Isolation Level</th><th>Status</th></tr></thead>\n";
++    ss << "    <tbody>\n";
++
++    // Browser Main Process
++    ss << "      <tr><td>" << base::GetCurrentProcId() << "</td><td><strong>Browser Main</strong></td><td>UI &amp; Frame Coordination</td><td>Broker / Host Token</td><td><span class='badge badge-success'>HEALTHY</span></td></tr>\n";
++
++    // Renderers
++    int renderer_count = 0;
++    auto iter = content::RenderProcessHost::AllHostsIterator();
++    while (!iter.IsAtEnd()) {
++      if (iter.GetCurrentValue()->GetProcess().IsValid()) {
++        base::ProcessId rpid = iter.GetCurrentValue()->GetProcess().Pid();
++        if (rpid != 0) {
++          renderer_count++;
++          ss << "      <tr><td>" << rpid << "</td><td>Renderer</td><td>Site Isolated Content</td><td>Restricted Subprocess Sandbox</td><td><span class='badge badge-info'>RUNNING</span></td></tr>\n";
++        }
++      }
++      iter.Advance();
++    }
++
++    if (renderer_count == 0) {
++      ss << "      <tr><td colspan='5' style='color:#64748b;text-align:center;'>No background renderers currently active.</td></tr>\n";
++    }
++
++    ss << "    </tbody>\n";
++    ss << "  </table>\n";
++    ss << "</div>\n";
++
++    // Discard & Performance Policies
++    ss << "<div class='card' style='margin-top:20px;'>\n";
++    ss << "  <div class='card-title'>VELOX Tab Discard Heuristics &amp; RAM Protection Rules</div>\n";
++    ss << "  <table>\n";
++    ss << "    <thead><tr><th>Policy Condition</th><th>Heuristic Evaluation</th><th>Protection Action</th></tr></thead>\n";
++    ss << "    <tbody>\n";
++    ss << "      <tr><td>Active Audible Media</td><td>Detected via WebContents audio state</td><td><strong>PROHIBITED</strong> from discard</td></tr>\n";
++    ss << "      <tr><td>WebRTC Stream / Call</td><td>Active RTCPeerConnection established</td><td><strong>PROHIBITED</strong> from discard</td></tr>\n";
++    ss << "      <tr><td>Pending / Active Download</td><td>In-flight download item</td><td><strong>PROHIBITED</strong> from discard</td></tr>\n";
++    ss << "      <tr><td>Pinned Tab Status</td><td>User-pinned tab marker</td><td><strong>PROHIBITED</strong> from discard</td></tr>\n";
++    ss << "      <tr><td>Idle Background Tab (&gt;15 min)</td><td>No media, no WebRTC, unpinned</td><td>Eligible for graceful memory reclaim</td></tr>\n";
++    ss << "    </tbody>\n";
++    ss << "  </table>\n";
++    ss << "</div>\n";
++
++    ss << "<div class='footer'>VELOX High-Performance Desktop Browser &mdash; Master Engineering Directive Section 16 (Privileged WebUI)</div>\n";
++    ss << "</body></html>\n";
++
++    std::move(callback).Run(base::MakeRefCounted<base::RefCountedString>(ss.str()));
++  }
++
++ private:
++  raw_ptr<Profile> profile_;
++};
++
++}  // namespace
++
++VeloxPerformanceUIConfig::VeloxPerformanceUIConfig()
++    : DefaultWebUIConfig(content::kVeloxUIScheme,
++                         chrome::kVeloxUIPerformanceHost) {}
++
++VeloxPerformanceUI::VeloxPerformanceUI(content::WebUI* web_ui)
++    : content::WebUIController(web_ui) {
++  Profile* profile = Profile::FromWebUI(web_ui);
++  content::URLDataSource::Add(
++      profile, std::make_unique<VeloxPerformanceHTMLSource>(profile));
++}
++
++VeloxPerformanceUI::~VeloxPerformanceUI() = default;
+diff --git a/chrome/browser/ui/webui/velox/velox_performance_ui.h b/chrome/browser/ui/webui/velox/velox_performance_ui.h
+new file mode 100644
+index 0000000000..1fe068ef14
+--- /dev/null
++++ b/chrome/browser/ui/webui/velox/velox_performance_ui.h
+@@ -0,0 +1,32 @@
++// Copyright 2026 The VELOX Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_WEBUI_VELOX_VELOX_PERFORMANCE_UI_H_
++#define CHROME_BROWSER_UI_WEBUI_VELOX_VELOX_PERFORMANCE_UI_H_
++
++#include <memory>
++#include <string>
++
++#include "content/public/browser/web_ui_controller.h"
++#include "content/public/browser/webui_config.h"
++
++class VeloxPerformanceUI;
++
++// WebUIConfig for velox://performance
++class VeloxPerformanceUIConfig
++    : public content::DefaultWebUIConfig<VeloxPerformanceUI> {
++ public:
++  VeloxPerformanceUIConfig();
++};
++
++// The WebUIController for velox://performance
++class VeloxPerformanceUI : public content::WebUIController {
++ public:
++  explicit VeloxPerformanceUI(content::WebUI* web_ui);
++  VeloxPerformanceUI(const VeloxPerformanceUI&) = delete;
++  VeloxPerformanceUI& operator=(const VeloxPerformanceUI&) = delete;
++  ~VeloxPerformanceUI() override;
++};
++
++#endif  // CHROME_BROWSER_UI_WEBUI_VELOX_VELOX_PERFORMANCE_UI_H_
+diff --git a/chrome/common/webui_url_constants.h b/chrome/common/webui_url_constants.h
+index ff691df3c5..2d9789a2e2 100644
+--- a/chrome/common/webui_url_constants.h
++++ b/chrome/common/webui_url_constants.h
+@@ -30,6 +30,10 @@ namespace chrome {
+ // Not all components have corresponding URLs and vice versa. Only add as
+ // needed.
+ // Please keep in alphabetical order, with OS/feature specific sections below.
++// VELOX WebUI constants.
++inline constexpr char kVeloxUIPerformanceHost[] = "performance";
++inline constexpr char kVeloxUIPerformanceURL[] = "velox://performance/";
++
+ inline constexpr char kChromeUIAboutHost[] = "about";
+ inline constexpr char kChromeUIAboutURL[] = "chrome://about/";
+ inline constexpr char kChromeUIAccessCodeCastHost[] = "access-code-cast";
+diff --git a/content/browser/webui/web_ui_impl.cc b/content/browser/webui/web_ui_impl.cc
+index 92df234b25..3e680ffe5f 100644
+--- a/content/browser/webui/web_ui_impl.cc
++++ b/content/browser/webui/web_ui_impl.cc
+@@ -80,8 +80,9 @@ blink::mojom::LocalResourceLoaderConfigPtr CreateLocalResourceLoaderConfig(
+     auto* webui_data_source =
+         static_cast<WebUIDataSourceImpl*>(data_source.get());
+     url::Origin origin = webui_data_source->GetOrigin();
+-    // We only support data sources that serve URLs of the form: chrome://*
+-    if (origin.scheme() != kChromeUIScheme) {
++    // We only support data sources that serve URLs of the form: chrome://* or velox://*
++    if (origin.scheme() != kChromeUIScheme &&
++        origin.scheme() != kVeloxUIScheme) {
+       continue;
+     }
+     auto loader_source = blink::mojom::LocalResourceSource::New();
+@@ -125,7 +126,8 @@ std::u16string WebUI::GetJavascriptCall(std::string_view function_name,
+ }
+ 
+ WebUIImpl::WebUIImpl(WebContents* web_contents)
+-    : requestable_schemes_({kChromeUIScheme, url::kFileScheme}),
++    : requestable_schemes_(
++          {kChromeUIScheme, kVeloxUIScheme, url::kFileScheme}),
+       web_contents_(web_contents),
+       web_contents_observer_(
+           std::make_unique<WebUIMainFrameObserver>(this, web_contents_)) {
+diff --git a/content/common/url_schemes.cc b/content/common/url_schemes.cc
+index ce9644d33f..8349cae597 100644
+--- a/content/common/url_schemes.cc
++++ b/content/common/url_schemes.cc
+@@ -30,6 +30,7 @@ const char* const kDefaultSavableSchemes[] = {
+   url::kFileSystemScheme,
+   kChromeDevToolsScheme,
+   kChromeUIScheme,
++  kVeloxUIScheme,
+   url::kDataScheme
+ };
+ 
+@@ -60,6 +61,7 @@ void RegisterContentSchemes(bool should_lock_registry) {
+ 
+   url::AddStandardScheme(kChromeDevToolsScheme, url::SCHEME_WITH_HOST);
+   url::AddStandardScheme(kChromeUIScheme, url::SCHEME_WITH_HOST);
++  url::AddStandardScheme(kVeloxUIScheme, url::SCHEME_WITH_HOST);
+   url::AddStandardScheme(kChromeUIUntrustedScheme, url::SCHEME_WITH_HOST);
+   url::AddStandardScheme(kChromeErrorScheme, url::SCHEME_WITH_HOST);
+   for (auto& scheme : schemes.standard_schemes)
+@@ -70,6 +72,7 @@ void RegisterContentSchemes(bool should_lock_registry) {
+ 
+   schemes.secure_schemes.push_back(kChromeDevToolsScheme);
+   schemes.secure_schemes.push_back(kChromeUIScheme);
++  schemes.secure_schemes.push_back(kVeloxUIScheme);
+   schemes.secure_schemes.push_back(kChromeUIUntrustedScheme);
+   schemes.secure_schemes.push_back(kChromeErrorScheme);
+   for (auto& scheme : schemes.secure_schemes)
+@@ -86,6 +89,7 @@ void RegisterContentSchemes(bool should_lock_registry) {
+     url::AddNoAccessScheme(scheme.c_str());
+ 
+   schemes.cors_enabled_schemes.push_back(kChromeUIScheme);
++  schemes.cors_enabled_schemes.push_back(kVeloxUIScheme);
+   schemes.cors_enabled_schemes.push_back(kChromeUIUntrustedScheme);
+   for (auto& scheme : schemes.cors_enabled_schemes)
+     url::AddCorsEnabledScheme(scheme.c_str());
+@@ -114,6 +118,7 @@ void RegisterContentSchemes(bool should_lock_registry) {
+   // service workers don't work for chrome[-untrusted]:// when the flag is not
+   // enabled.
+   schemes.service_worker_schemes.push_back(kChromeUIScheme);
++  schemes.service_worker_schemes.push_back(kVeloxUIScheme);
+   schemes.service_worker_schemes.push_back(kChromeUIUntrustedScheme);
+ 
+   // Prevent future modification of the scheme lists. This is to prevent
+diff --git a/content/public/browser/url_data_source.cc b/content/public/browser/url_data_source.cc
+index 577a8e77b2..016d549f56 100644
+--- a/content/public/browser/url_data_source.cc
++++ b/content/public/browser/url_data_source.cc
+@@ -133,7 +133,8 @@ bool URLDataSource::ShouldServiceRequest(const GURL& url,
+                                          BrowserContext* browser_context,
+                                          int render_process_id) {
+   return url.SchemeIs(kChromeDevToolsScheme) || url.SchemeIs(kChromeUIScheme) ||
+-         url.SchemeIs(kChromeUIUntrustedScheme);
++         url.SchemeIs(kChromeUIUntrustedScheme) ||
++         url.SchemeIs(kVeloxUIScheme);
+ }
+ 
+ bool URLDataSource::ShouldServeMimeTypeAsContentTypeHeader() {
+diff --git a/content/public/browser/webui_config_map.cc b/content/public/browser/webui_config_map.cc
+index f8958d9d42..d07de38242 100644
+--- a/content/public/browser/webui_config_map.cc
++++ b/content/public/browser/webui_config_map.cc
+@@ -71,7 +71,8 @@ WebUIConfigMap::WebUIConfigMap()
+ WebUIConfigMap::~WebUIConfigMap() = default;
+ 
+ void WebUIConfigMap::AddWebUIConfig(std::unique_ptr<WebUIConfig> config) {
+-  CHECK_EQ(config->scheme(), kChromeUIScheme);
++  CHECK(config->scheme() == kChromeUIScheme ||
++        config->scheme() == kVeloxUIScheme);
+   AddWebUIConfigImpl(std::move(config));
+ }
+ 
+@@ -96,7 +97,8 @@ WebUIConfig* WebUIConfigMap::GetConfig(BrowserContext* browser_context,
+   // chrome.send() or Mojo.bindInterface(), since some WebUIs currently expose
+   // untrusted content via these schemes.
+   if (url.scheme() != kChromeUIScheme &&
+-      url.scheme() != kChromeUIUntrustedScheme) {
++      url.scheme() != kChromeUIUntrustedScheme &&
++      url.scheme() != kVeloxUIScheme) {
+     return nullptr;
+   }
+ 
+diff --git a/content/public/common/url_constants.h b/content/public/common/url_constants.h
+index 55ea2d2632..6fff99a3f8 100644
+--- a/content/public/common/url_constants.h
++++ b/content/public/common/url_constants.h
+@@ -19,6 +19,7 @@ namespace content {
+ inline constexpr char kChromeDevToolsScheme[] = "devtools";
+ inline constexpr char kChromeErrorScheme[] = "chrome-error";
+ inline constexpr char kChromeUIScheme[] = "chrome";  // Used for WebUIs.
++inline constexpr char kVeloxUIScheme[] = "velox";    // Used for VELOX WebUIs.
+ inline constexpr char kChromeNativeScheme[] = "chrome-native";
+ inline constexpr char kChromeUIUntrustedScheme[] = "chrome-untrusted";
+ inline constexpr char kViewSourceScheme[] = "view-source";

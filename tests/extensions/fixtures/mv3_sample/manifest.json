@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Velox Test Extension (MV3)",
+  "version": "1.0.0",
+  "description": "Verification fixture for VELOX Manifest V3 extension compatibility harness",
+  "permissions": [
+    "storage",
+    "tabs",
+    "declarativeNetRequest"
+  ],
+  "host_permissions": [
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

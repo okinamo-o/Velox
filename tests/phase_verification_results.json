@@ -1,0 +1,31 @@
+{
+  "phase3": {
+    "settings_page": "VERIFIED",
+    "downloads_page": "VERIFIED",
+    "bookmarks_page": "VERIFIED",
+    "history_page": "VERIFIED",
+    "incognito": "VERIFIED",
+    "profile_isolation": "VERIFIED",
+    "velox_performance": "VERIFIED"
+  },
+  "phase5": {
+    "extensions_page": "VERIFIED",
+    "service_worker": "VERIFIED",
+    "sw_message_pass": "VERIFIED",
+    "content_script": "VERIFIED",
+    "manifest_validation": "VERIFIED"
+  },
+  "phase8": {
+    "dom_apis": "PARTIALLY VERIFIED",
+    "security_context": "VERIFIED",
+    "navigation_api": "VERIFIED",
+    "storage_apis": "VERIFIED"
+  },
+  "phase9": {
+    "page_load_timing": "VERIFIED",
+    "page_load_mean_ms": 18.6,
+    "page_load_stdev_ms": 6.9,
+    "memory_measurement": "VERIFIED",
+    "process_topology": "VERIFIED"
+  }
+}
