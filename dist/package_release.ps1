@@ -88,12 +88,12 @@ $ManifestData = [ordered]@{
         filename    = "VeloxSetup.exe"
         sha256      = $SetupHash
         size_bytes  = $SetupSize
-        download_url= "https://github.com/Louay/velox/releases/download/v$Version/VeloxSetup.exe"
+        download_url= "https://github.com/okinamo-o/Velox/releases/download/v$Version/VeloxSetup.exe"
     }
     portable      = [ordered]@{
         filename    = "Velox-v$Version-Portable-x64.zip"
         sha256      = if ($ZipHash) { $ZipHash } else { "" }
-        download_url= "https://github.com/Louay/velox/releases/download/v$Version/Velox-v$Version-Portable-x64.zip"
+        download_url= "https://github.com/okinamo-o/Velox/releases/download/v$Version/Velox-v$Version-Portable-x64.zip"
     }
     notes         = @(
         "⚡ Velox Shield intelligent tracker & ad blocking built-in",

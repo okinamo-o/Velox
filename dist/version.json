@@ -1,4 +1,4 @@
-﻿{
+{
     "product":  "Velox Browser",
     "version":  "134.0.6998.178",
     "channel":  "stable",
@@ -7,12 +7,12 @@
                       "filename":  "VeloxSetup.exe",
                       "sha256":  "BB91F688336AC11DB6DF73AEA43F0E09EDB50AA7DC1C8C76AFA8EB7F3D02AE7D",
                       "size_bytes":  142308864,
-                      "download_url":  "https://github.com/Louay/velox/releases/download/v134.0.6998.178/VeloxSetup.exe"
+                      "download_url":  "https://github.com/okinamo-o/Velox/releases/download/v134.0.6998.178/VeloxSetup.exe"
                   },
     "portable":  {
                      "filename":  "Velox-v134.0.6998.178-Portable-x64.zip",
                      "sha256":  "36DEC82806FF516C8E2CCFBFBCB96171180BC82B24597F4464D152E8A0282E25",
-                     "download_url":  "https://github.com/Louay/velox/releases/download/v134.0.6998.178/Velox-v134.0.6998.178-Portable-x64.zip"
+                     "download_url":  "https://github.com/okinamo-o/Velox/releases/download/v134.0.6998.178/Velox-v134.0.6998.178-Portable-x64.zip"
                  },
     "notes":  [
                   "âš¡ Velox Shield intelligent tracker \u0026 ad blocking built-in",
