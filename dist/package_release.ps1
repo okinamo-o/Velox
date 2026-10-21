@@ -66,7 +66,10 @@ if (Test-Path $AppDir) {
     if (Test-Path $TempPortable) { Remove-Item $TempPortable -Recurse -Force }
     New-Item -ItemType Directory -Path $TempPortable | Out-Null
     
-    Copy-Item "$AppDir\*" -Destination $TempPortable -Recurse -Exclude "*.log","*.dmp" -Force
+    Copy-Item "$AppDir\*" -Destination $TempPortable -Recurse -Exclude "*.log","*.dmp","*.old" -Force
+    if (Test-Path "$TempPortable\134.0.6998.178") {
+        Remove-Item "$TempPortable\134.0.6998.178" -Recurse -Force
+    }
     Compress-Archive -Path "$TempPortable\*" -DestinationPath $PortableZip -CompressionLevel Optimal
     Remove-Item $TempPortable -Recurse -Force
     
