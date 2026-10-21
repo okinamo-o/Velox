@@ -1,0 +1,24 @@
+﻿{
+    "product":  "Velox Browser",
+    "version":  "134.0.6998.180",
+    "channel":  "stable",
+    "release_date":  "2026-10-21T21:21:36Z",
+    "installer":  {
+                      "filename":  "VeloxSetup.exe",
+                      "sha256":  "427341FC7F7F72FB43C7FBE2EB8C0DF1F65D65DC6CC2C19BA7A229062386094F",
+                      "size_bytes":  142298112,
+                      "download_url":  "https://github.com/okinamo-o/Velox/releases/download/v134.0.6998.180/VeloxSetup.exe"
+                  },
+    "portable":  {
+                     "filename":  "Velox-v134.0.6998.180-Portable-x64.zip",
+                     "sha256":  "773C94DBA7277CE859685682B0FE8418E15CDBBC4CE208FA96852BBD32C576C0",
+                     "download_url":  "https://github.com/okinamo-o/Velox/releases/download/v134.0.6998.180/Velox-v134.0.6998.180-Portable-x64.zip"
+                 },
+    "notes":  [
+                  "âš¡ Velox Shield intelligent tracker \u0026 ad blocking built-in",
+                  "ðŸï¸ Opera One-style Tab Islands with automatic grouping \u0026 glowing headers",
+                  "ðŸš€ Ultra hardware-accelerated Blink rendering engine",
+                  "ðŸŽ¨ Modern futuristic glow UI with clean non-client frame",
+                  "ðŸ” Intelligent dynamic update notifications with one-click restore"
+              ]
+}

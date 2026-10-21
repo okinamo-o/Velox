@@ -25,19 +25,24 @@ def main():
     }
 
     # 1. Create or get existing release
-    tag = "v134.0.6998.179"
-    name = "Velox Browser v134.0.6998.179 (Maintenance & Incognito Fix)"
+    version = sys.argv[1] if len(sys.argv) > 1 else "134.0.6998.180"
+    tag = f"v{version}"
+    name = f"Velox Browser v{version} (Super PiP & Universal Dark Theme)"
     body = (
-        "## Velox Browser v134.0.6998.179\n\n"
-        "### Bug Fixes & Improvements\n"
-        "- **Fixed Incognito Window Exit Issue**: Resolved an observer teardown issue in `FocusManager` where closing an incognito window would crash the process and close normal windows.\n"
-        "- **Enhanced Lifecycle Safety**: Improved top container auto-hide teardown and safe widget unregistration.\n"
+        f"## Velox Browser v{version}\n\n"
+        "### 🌟 New Features & Enhancements\n"
+        "- **Universal Cyberpunk Dark Theme**: Forced deep cyberpunk dark theme (`#0A0D14` frame, `#131826` active tabs, `#0C101B` toolbar, `#121826` omnibox with `#38BDF8` cyan border & crisp white text) on every device, regardless of Windows OS light/dark personalization.\n"
+        "- **Super Picture-in-Picture (PiP)**:\n"
+        "  - **Modern 2024 Controls**: Integrated seek bar timeline, 10s backward/forward seek buttons, play/pause.\n"
+        "  - **Auto-PiP on Tab Switch**: Seamlessly floats video when switching tabs without requiring web page opt-in.\n"
+        "  - **Neon Cyberpunk Gradient Rim**: Glowing cyan-to-purple (`#00F0FF` -> `#A855F7`) border overlay.\n"
+        "  - **Keyboard Hotkeys**: `T` key cycles opacity (100% -> 70% -> 40% -> 100%), `Left`/`Right` arrow keys seek 10s, `Space` toggles playback.\n"
+        "  - **Mouse Transparency Control**: `Ctrl` + mouse wheel smoothly adjusts PiP transparency down to 35%.\n"
+        "- **Fixed Incognito Window Exit Issue**: Prevented process teardown crashes when closing incognito sessions.\n"
         "- **Background Auto-Updater**: Instant one-click update via the glowing **Update Velox** toolbar button.\n\n"
         "### Downloads & Verification\n"
         "- **VeloxSetup.exe** (Standalone Installer)\n"
-        "  - SHA-256: `05973FC8A4D4376F1DD385B8A572177C908CF424D131348E736028FE18E2E71C`\n"
-        "- **Velox-v134.0.6998.179-Portable-x64.zip** (Portable Edition)\n"
-        "  - SHA-256: `773C94DBA7277CE859685682B0FE8418E15CDBBC4CE208FA96852BBD32C576C0`\n"
+        f"- **Velox-v{version}-Portable-x64.zip** (Portable Edition)\n"
     )
 
     # Check if release already exists
@@ -87,7 +92,7 @@ def main():
     # Files to upload
     files_to_upload = [
         ("D:/Velox/dist/VeloxSetup.exe", "VeloxSetup.exe", "application/octet-stream"),
-        ("D:/Velox/dist/Velox-v134.0.6998.179-Portable-x64.zip", "Velox-v134.0.6998.179-Portable-x64.zip", "application/zip")
+        (f"D:/Velox/dist/Velox-v{version}-Portable-x64.zip", f"Velox-v{version}-Portable-x64.zip", "application/zip")
     ]
 
     for file_path, asset_name, content_type in files_to_upload:
@@ -130,7 +135,7 @@ def main():
         except urllib.error.HTTPError as e:
             print(f"Failed to upload {asset_name}: {e.code} {e.read().decode()}")
 
-    print("\nRelease v134.0.6998.179 is completely published!")
+    print(f"\nRelease v{version} is completely published!")
 
 if __name__ == "__main__":
     main()

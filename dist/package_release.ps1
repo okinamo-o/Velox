@@ -6,7 +6,7 @@
 #>
 
 param(
-    [string]$Version = "134.0.6998.178",
+    [string]$Version = "134.0.6998.180",
     [string]$SrcDir = "D:\Velox\src",
     [string]$DistDir = "D:\Velox\dist",
     [switch]$Rebuild
