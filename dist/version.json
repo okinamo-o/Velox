@@ -1,24 +1,24 @@
 ﻿{
     "product":  "Velox Browser",
-    "version":  "134.0.6998.180",
+    "version":  "134.0.6998.181",
     "channel":  "stable",
-    "release_date":  "2026-10-21T21:40:56Z",
+    "release_date":  "2026-10-23T16:56:47Z",
     "installer":  {
                       "filename":  "VeloxSetup.exe",
-                      "sha256":  "427341FC7F7F72FB43C7FBE2EB8C0DF1F65D65DC6CC2C19BA7A229062386094F",
-                      "size_bytes":  142298112,
-                      "download_url":  "https://github.com/okinamo-o/Velox/releases/download/v134.0.6998.180/VeloxSetup.exe"
+                      "sha256":  "08C61B89DD9D89C02EE2E7FF869533EBEC98DF43F1A3B099DA62614315BB6231",
+                      "size_bytes":  142310912,
+                      "download_url":  "https://github.com/okinamo-o/Velox/releases/download/v134.0.6998.181/VeloxSetup.exe"
                   },
     "portable":  {
-                     "filename":  "Velox-v134.0.6998.180-Portable-x64.zip",
-                     "sha256":  "140C96519BDF1AC4A03DE6F869E01C284A65BBCE4A472E69DBE0C8C5D2B667E0",
-                     "download_url":  "https://github.com/okinamo-o/Velox/releases/download/v134.0.6998.180/Velox-v134.0.6998.180-Portable-x64.zip"
+                     "filename":  "Velox-v134.0.6998.181-Portable-x64.zip",
+                     "sha256":  "0C8849ABF9960A0BABC5806A5F7E65CBA3259359F5A73E2178076AB73A2790FB",
+                     "download_url":  "https://github.com/okinamo-o/Velox/releases/download/v134.0.6998.181/Velox-v134.0.6998.181-Portable-x64.zip"
                  },
     "notes":  [
-                  "âš¡ Velox Shield intelligent tracker \u0026 ad blocking built-in",
-                  "ðŸï¸ Opera One-style Tab Islands with automatic grouping \u0026 glowing headers",
-                  "ðŸš€ Ultra hardware-accelerated Blink rendering engine",
-                  "ðŸŽ¨ Modern futuristic glow UI with clean non-client frame",
-                  "ðŸ” Intelligent dynamic update notifications with one-click restore"
+                  "⚡ Instant Auto-Update Notification \u0026 Background Staging Engine",
+                  "🎬 Super Picture-in-Picture (2024 Scrubber, 10s Seek, Auto-PiP, Opacity Hotkeys)",
+                  "🌑 Universal Cyberpunk Dark Theme forced across all Windows devices",
+                  "🛡️ Velox Shield intelligent tracker \u0026 ad blocking built-in",
+                  "🏝️ Opera One-style Tab Islands with automatic grouping \u0026 glowing headers"
               ]
 }
