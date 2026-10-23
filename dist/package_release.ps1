@@ -67,9 +67,8 @@ if (Test-Path $AppDir) {
     New-Item -ItemType Directory -Path $TempPortable | Out-Null
     
     Copy-Item "$AppDir\*" -Destination $TempPortable -Recurse -Exclude "*.log","*.dmp","*.old" -Force
-    if (Test-Path "$TempPortable\134.0.6998.178") {
-        Remove-Item "$TempPortable\134.0.6998.178" -Recurse -Force
-    }
+    Get-ChildItem -Path $TempPortable -Directory | Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' -and $_.Name -ne $Version } | Remove-Item -Recurse -Force
+    if (Test-Path "$TempPortable\old_chrome.exe") { Remove-Item "$TempPortable\old_chrome.exe" -Force }
     Compress-Archive -Path "$TempPortable\*" -DestinationPath $PortableZip -CompressionLevel Optimal
     Remove-Item $TempPortable -Recurse -Force
     
