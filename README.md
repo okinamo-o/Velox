@@ -5,7 +5,7 @@
 ### The Ultra-Fast, Shielded Web Browser
 
 [![Release](https://img.shields.io/github/v/release/okinamo-o/Velox?color=00f0ff&label=Release&style=for-the-badge)](https://github.com/okinamo-o/Velox/releases)
-[![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011-a855f7?style=for-the-badge&logo=windows)](https://github.com/okinamo-o/Velox/releases)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-a855f7?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/okinamo-o/Velox/releases)
 [![License](https://img.shields.io/badge/License-BSD%203--Clause-10b981?style=for-the-badge)](LICENSE)
 [![Chromium](https://img.shields.io/badge/Engine-Chromium%20134%20Ultra-blue?style=for-the-badge&logo=googlechrome)](https://chromium.googlesource.com/chromium/src)
 
@@ -13,7 +13,7 @@
 
 **Velox** is a next-generation desktop browser re-architected for raw speed, clean aesthetics, and zero distractions. Built upon custom-tuned Chromium 134, Velox strips away telemetry and background clutter while introducing deep system-level optimizations and modern workflows.
 
-[**Download Velox (Installer)**](https://github.com/okinamo-o/Velox/releases/latest/download/VeloxSetup.exe) • [**Download Portable ZIP**](https://github.com/okinamo-o/Velox/releases/latest/download/Velox-v134.0.6998.178-Portable-x64.zip) • [**View Showcase Site**](dist/website/index.html)
+[**Download for Windows**](https://github.com/okinamo-o/Velox/releases/latest/download/VeloxSetup.exe) • [**Download for Linux**](#-linux-installation) • [**Portable ZIP**](https://github.com/okinamo-o/Velox/releases/latest/download/Velox-v134.0.6998.182-Portable-x64.zip) • [**View Showcase Site**](dist/website/index.html)
 
 </div>
 
@@ -47,19 +47,39 @@ Velox stays out of your way. Update buttons only appear in your toolbar when an 
 
 ## 🚀 Quick Install
 
-### Option 1: Standalone Installer (Recommended)
+### 🪟 Windows Installation
+
+#### Option 1: Standalone Installer (Recommended)
 Download and run the latest standalone setup:
 👉 **[Download VeloxSetup.exe](https://github.com/okinamo-o/Velox/releases/latest/download/VeloxSetup.exe)**
 
-### Option 2: Windows Package Manager (`winget`)
+#### Option 2: Portable Edition (Zero Install)
+Download the portable ZIP archive, extract it anywhere (including a USB drive), and run `velox.exe`:
+👉 **[Download Portable ZIP](https://github.com/okinamo-o/Velox/releases/latest/download/Velox-v134.0.6998.182-Portable-x64.zip)**
+
+#### Option 3: Windows Package Manager (`winget`)
 Install in one command via PowerShell or Command Prompt:
 ```powershell
 winget install Velox.VeloxBrowser
 ```
 
-### Option 3: Portable Edition (Zero Install)
-Download the portable ZIP archive, extract it anywhere (including a USB drive), and run `velox.exe`:
-👉 **[Download Portable ZIP](https://github.com/okinamo-o/Velox/releases/latest/download/Velox-v134.0.6998.178-Portable-x64.zip)**
+---
+
+### 🐧 Linux Installation
+
+#### Option 1: 1-Click Quick Runner (Wine / Proton)
+Run this single command in your terminal to download Velox, configure the environment, and integrate application menu shortcuts:
+```bash
+curl -sSL https://raw.githubusercontent.com/okinamo-o/Velox/main/scripts/velox-linux.sh | bash -s -- --wine
+```
+
+#### Option 2: Build Native Linux Binary from Source
+You can compile native Velox directly on Linux using our patch set:
+```bash
+# View interactive build instructions:
+curl -sSL https://raw.githubusercontent.com/okinamo-o/Velox/main/scripts/velox-linux.sh | bash -s -- --build
+```
+Or follow the [Building From Source](#-building-from-source) instructions below.
 
 ---
 
@@ -87,13 +107,8 @@ Velox/
 
 ## 🛠️ Building From Source
 
-### Prerequisites
-1. **Windows 10 / 11 (64-bit)**
-2. **Visual Studio 2022** (with *Desktop development with C++*, MFC, ATL, and Windows 10/11 SDK)
-3. **Google depot_tools** configured in your `PATH`
-4. At least 100 GB of free SSD storage
-
-### Step-by-Step Build
+### Building on Windows (10 / 11 64-bit)
+1. **Prerequisites**: Visual Studio 2022 (with *Desktop development with C++*, MFC, ATL, and Windows 10/11 SDK) and Google `depot_tools`.
 ```powershell
 # 1. Clone this repository
 git clone https://github.com/okinamo-o/Velox.git D:\Velox
@@ -109,10 +124,27 @@ python scripts/apply_patches.py
 gn gen out/Default --args="target_os=\"win\" target_cpu=\"x64\" is_debug=false is_component_build=false symbol_level=0 enable_widevine=true proprietary_codecs=true ffmpeg_branding=\"Chrome\""
 
 # 5. Compile Velox
-autoninja -C out/Default chrome
+autoninja -C out/Default chrome mini_installer
+```
 
-# 6. Package Standalone Installer
-autoninja -C out/Default mini_installer
+### Building on Linux (Ubuntu / Debian / Arch / Fedora)
+1. **Prerequisites**: Google `depot_tools`, `git`, `python3`, `curl`, and standard C++ build essentials.
+```bash
+# 1. Fetch Chromium source code
+mkdir -p ~/velox-src && cd ~/velox-src
+fetch --nohooks chromium
+cd src && git checkout -b velox-134 refs/tags/134.0.6998.182
+gclient sync -D
+
+# 2. Clone Velox and apply patches
+git clone https://github.com/okinamo-o/Velox.git ~/Velox
+for p in ~/Velox/patches/*.patch; do patch -p1 -N < "$p" || true; done
+
+# 3. Generate Linux build configuration
+gn gen out/Release --args="target_os=\"linux\" target_cpu=\"x64\" is_debug=false is_component_build=false is_official_build=true symbol_level=0 enable_widevine=true proprietary_codecs=true ffmpeg_branding=\"Chrome\""
+
+# 4. Compile native Linux binary
+autoninja -C out/Release chrome
 ```
 
 ---

@@ -194,6 +194,37 @@
       box-shadow: 0 10px 40px rgba(0, 240, 255, 0.5);
     }
 
+    .btn-linux {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      background: rgba(168, 85, 247, 0.12);
+      color: #e2e8f0;
+      padding: 16px 28px;
+      border-radius: 12px;
+      font-size: 1.05rem;
+      font-weight: 600;
+      text-decoration: none;
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      border: 1px solid rgba(168, 85, 247, 0.4);
+    }
+
+    .btn-linux:hover {
+      background: rgba(168, 85, 247, 0.25);
+      border-color: #a855f7;
+      box-shadow: 0 0 25px rgba(168, 85, 247, 0.4);
+      transform: translateY(-2px) scale(1.02);
+      color: #fff;
+    }
+
+    .buttons-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+    }
+
     .download-meta {
       font-size: 0.85rem;
       color: var(--text-muted);
@@ -415,7 +446,7 @@
         <div class="nav-links">
           <a href="#features" class="nav-link">Features</a>
           <a href="#benchmarks" class="nav-link">Performance</a>
-          <a href="https://github.com/Louay/velox" target="_blank" class="nav-link">GitHub</a>
+          <a href="https://github.com/okinamo-o/Velox" target="_blank" class="nav-link">GitHub</a>
           <a href="#download" class="nav-link" style="color: var(--accent-cyan); font-weight: 700;">Download</a>
         </div>
       </nav>
@@ -436,17 +467,29 @@
         </p>
 
         <div class="cta-group">
-          <a href="VeloxSetup.exe" download="VeloxSetup.exe" class="btn-download">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-              <polyline points="7 10 12 15 17 10"></polyline>
-              <line x1="12" y1="15" x2="12" y2="3"></line>
-            </svg>
-            <span>Download for Windows (64-bit)</span>
-          </a>
+          <div class="buttons-row">
+            <a href="https://github.com/okinamo-o/Velox/releases/download/v134.0.6998.182/VeloxSetup.exe" class="btn-download">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="7 10 12 15 17 10"></polyline>
+                <line x1="12" y1="15" x2="12" y2="3"></line>
+              </svg>
+              <span>Download for Windows (64-bit)</span>
+            </a>
+            <a href="https://github.com/okinamo-o/Velox#-linux-installation" class="btn-linux">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+                <line x1="8" y1="21" x2="16" y2="21"></line>
+                <line x1="12" y1="17" x2="12" y2="21"></line>
+              </svg>
+              <span>Download for Linux 🐧</span>
+            </a>
+          </div>
           <div class="download-meta">
-            <span>Free & Open Source • Windows 10/11 • </span>
-            <a href="Velox-v134.0.6998.180-Portable-x64.zip" download>Download Portable ZIP</a>
+            <span>Free & Open Source • Windows 10/11 & Linux • </span>
+            <a href="https://github.com/okinamo-o/Velox/releases/download/v134.0.6998.182/Velox-v134.0.6998.182-Portable-x64.zip">Download Portable ZIP</a>
+            <span> • </span>
+            <a href="https://raw.githubusercontent.com/okinamo-o/Velox/main/scripts/velox-linux.sh">1-Click Linux Script</a>
           </div>
         </div>
 

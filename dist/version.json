@@ -1,24 +1,29 @@
-﻿{
-    "product":  "Velox Browser",
-    "version":  "134.0.6998.182",
-    "channel":  "stable",
-    "release_date":  "2026-10-23T21:45:56Z",
-    "installer":  {
-                      "filename":  "VeloxSetup.exe",
-                      "sha256":  "EAE98C01B8C4862BD12417BCEA78130280A829FE669BA850E3C14252B157964D",
-                      "size_bytes":  142305280,
-                      "download_url":  "https://github.com/okinamo-o/Velox/releases/download/v134.0.6998.182/VeloxSetup.exe"
-                  },
-    "portable":  {
-                     "filename":  "Velox-v134.0.6998.182-Portable-x64.zip",
-                     "sha256":  "13C23601E8E708CB1F7061EC8DC7C966851F40F96EE8FDDB94FB82CDD9A9D22C",
-                     "download_url":  "https://github.com/okinamo-o/Velox/releases/download/v134.0.6998.182/Velox-v134.0.6998.182-Portable-x64.zip"
-                 },
-    "notes":  [
-                  "âš¡ Velox Shield intelligent tracker \u0026 ad blocking built-in",
-                  "ðŸï¸ Opera One-style Tab Islands with automatic grouping \u0026 glowing headers",
-                  "ðŸš€ Ultra hardware-accelerated Blink rendering engine",
-                  "ðŸŽ¨ Modern futuristic glow UI with clean non-client frame",
-                  "ðŸ” Intelligent dynamic update notifications with one-click restore"
-              ]
+{
+    "product": "Velox Browser",
+    "version": "134.0.6998.182",
+    "channel": "stable",
+    "release_date": "2026-10-23T21:45:56Z",
+    "installer": {
+        "filename": "VeloxSetup.exe",
+        "sha256": "EAE98C01B8C4862BD12417BCEA78130280A829FE669BA850E3C14252B157964D",
+        "size_bytes": 142305280,
+        "download_url": "https://github.com/okinamo-o/Velox/releases/download/v134.0.6998.182/VeloxSetup.exe"
+    },
+    "portable": {
+        "filename": "Velox-v134.0.6998.182-Portable-x64.zip",
+        "sha256": "13C23601E8E708CB1F7061EC8DC7C966851F40F96EE8FDDB94FB82CDD9A9D22C",
+        "download_url": "https://github.com/okinamo-o/Velox/releases/download/v134.0.6998.182/Velox-v134.0.6998.182-Portable-x64.zip"
+    },
+    "linux": {
+        "quick_install": "curl -sSL https://raw.githubusercontent.com/okinamo-o/Velox/main/scripts/velox-linux.sh | bash -s -- --wine",
+        "script_url": "https://raw.githubusercontent.com/okinamo-o/Velox/main/scripts/velox-linux.sh"
+    },
+    "notes": [
+        "⚡ Velox Shield intelligent tracker & ad blocking built-in",
+        "🏝️ Opera One-style Tab Islands with automatic grouping & glowing headers",
+        "🚀 Ultra hardware-accelerated Blink rendering engine",
+        "🎨 Modern futuristic glow UI with clean non-client frame",
+        "🐧 1-click Linux installation script with Wine runner & desktop integration",
+        "🔔 Intelligent dynamic update notifications with one-click restore"
+    ]
 }
