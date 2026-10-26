@@ -13,7 +13,7 @@
 
 **Velox** is a next-generation desktop browser re-architected for raw speed, clean aesthetics, and zero distractions. Built upon custom-tuned Chromium 134, Velox strips away telemetry and background clutter while introducing deep system-level optimizations and modern workflows.
 
-[**Download for Windows**](https://github.com/okinamo-o/Velox/releases/latest/download/VeloxSetup.exe) • [**Download for Linux**](#-linux-installation) • [**Portable ZIP**](https://github.com/okinamo-o/Velox/releases/latest/download/Velox-v134.0.6998.182-Portable-x64.zip) • [**View Showcase Site**](dist/website/index.html)
+[**Download for Windows**](https://github.com/okinamo-o/Velox/releases/latest/download/VeloxSetup.exe) • [**Download for Linux**](#-linux-installation) • [**Portable ZIP**](https://github.com/okinamo-o/Velox/releases/latest/download/Velox-v134.0.6998.183-Portable-x64.zip) • [**View Showcase Site**](dist/website/index.html)
 
 </div>
 
@@ -26,6 +26,15 @@ Content blocking baked directly into the network loader pipeline. Ads, third-par
 
 ### 🏝️ Opera One Tab Islands
 Tabs group automatically into color-coded context islands. Collapse entire research clusters with one click, slide smoothly between active sessions, and enjoy custom glowing visual identifiers.
+
+### 🌌 Customizable Spaces (Workspaces)
+Effortlessly organize tabs into isolated workflows (e.g. *Work*, *Personal*, *Gaming*, *Dev*, *Study*).
+- Switch instantly with hotkeys (<kbd>Ctrl</kbd> + <kbd>1</kbd> / <kbd>2</kbd> / <kbd>3</kbd> or <kbd>Alt</kbd> + <kbd>1</kbd> / <kbd>2</kbd> / <kbd>3</kbd>) or the toolbar pill.
+- **Double-click or Right-click** any Space to rename it with custom names and quick preset chips.
+- Inactive spaces freeze background tabs automatically to save 0 KB wasted RAM.
+
+### 📝 New Tab Scratchpad & Focus Dashboard
+`chrome://newtab` now features a glassmorphic command center with a persistent quick scratchpad, focus session timer, and real-time shield & RAM statistics.
 
 ### ⚡ Ultra Hardware Acceleration
 - Custom-tuned GPU rasterization and WebGL shader pipelines.
@@ -55,7 +64,7 @@ Download and run the latest standalone setup:
 
 #### Option 2: Portable Edition (Zero Install)
 Download the portable ZIP archive, extract it anywhere (including a USB drive), and run `velox.exe`:
-👉 **[Download Portable ZIP](https://github.com/okinamo-o/Velox/releases/latest/download/Velox-v134.0.6998.182-Portable-x64.zip)**
+👉 **[Download Portable ZIP](https://github.com/okinamo-o/Velox/releases/latest/download/Velox-v134.0.6998.183-Portable-x64.zip)**
 
 #### Option 3: Windows Package Manager (`winget`)
 Install in one command via PowerShell or Command Prompt:

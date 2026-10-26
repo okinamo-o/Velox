@@ -25,14 +25,17 @@ def main():
     }
 
     # 1. Create or get existing release
-    version = sys.argv[1] if len(sys.argv) > 1 else "134.0.6998.182"
+    version = sys.argv[1] if len(sys.argv) > 1 else "134.0.6998.183"
     tag = f"v{version}"
-    name = f"Velox Browser v{version} (Comet-Style Tabs & Tab Audio Favicon Swap)"
+    name = f"Velox Browser v{version} (Customizable Spaces & Focus Dashboard)"
     body = (
         f"## Velox Browser v{version}\n\n"
         "### 🌟 New Features & Enhancements\n"
+        "- **Customizable Spaces (Workspaces)**: Effortlessly organize tabs into isolated workflows (e.g. Work, Gaming, Personal, Dev, Study). Switch instantly with hotkeys (`Ctrl+1/2/3`, `Alt+1/2/3`) or the toolbar pill. Double-click or right-click any Space to rename it with custom names and quick preset chips. Inactive space tabs are automatically frozen to save 0 KB wasted RAM.\n"
+        "- **New Tab Scratchpad & Focus Dashboard**: `chrome://newtab` now features a glassmorphic command center with a persistent quick scratchpad, focus session timer, and real-time shield & RAM statistics.\n"
         "- **Comet-Style Inactive Tabs**: Inactive tabs blend seamlessly into the window frame background with zero vertical separator lines; hovering reveals a gentle translucent glass pill. Active tabs stand out as glowing rounded cyber bubbles.\n"
         "- **Tab Audio Favicon Swap**: When audio is playing, the speaker indicator cleanly replaces the website icon in its exact spot without overlapping. Favicon immediately reappears when audio stops.\n"
+        "- **Linux 1-Click Installation**: Standalone runner script with desktop launcher integration for Linux users.\n"
         "- **Zero Extra Memory**: Pure rendering optimization with 0 KB RAM increase.\n"
         "- **Universal Cyberpunk Dark Theme**: Consistent deep cyberpunk styling across all Windows devices.\n"
         "- **Super Picture-in-Picture (PiP)**: Timeline seek bar, 10s skip buttons, opacity controls (`T`, `Ctrl`+Wheel), auto-PiP on tab switch.\n"
@@ -40,6 +43,7 @@ def main():
         "### Downloads & Verification\n"
         "- **VeloxSetup.exe** (Standalone Installer)\n"
         f"- **Velox-v{version}-Portable-x64.zip** (Portable Edition)\n"
+        "- **Linux 1-Click Script**: `curl -sSL https://raw.githubusercontent.com/okinamo-o/Velox/main/scripts/velox-linux.sh | bash -s -- --wine`\n"
     )
 
     # Check if release already exists

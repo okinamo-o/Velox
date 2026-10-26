@@ -1,24 +1,26 @@
 {
     "product": "Velox Browser",
-    "version": "134.0.6998.182",
+    "version": "134.0.6998.183",
     "channel": "stable",
-    "release_date": "2026-10-23T21:45:56Z",
+    "release_date": "2026-10-26T20:26:11Z",
     "installer": {
         "filename": "VeloxSetup.exe",
-        "sha256": "EAE98C01B8C4862BD12417BCEA78130280A829FE669BA850E3C14252B157964D",
-        "size_bytes": 142305280,
-        "download_url": "https://github.com/okinamo-o/Velox/releases/download/v134.0.6998.182/VeloxSetup.exe"
+        "sha256": "749F5845614D9B4CD2E98EF0D2ADCB3FB800266DC9EB1D9521A754A4BC78CA6E",
+        "size_bytes": 142310400,
+        "download_url": "https://github.com/okinamo-o/Velox/releases/download/v134.0.6998.183/VeloxSetup.exe"
     },
     "portable": {
-        "filename": "Velox-v134.0.6998.182-Portable-x64.zip",
-        "sha256": "13C23601E8E708CB1F7061EC8DC7C966851F40F96EE8FDDB94FB82CDD9A9D22C",
-        "download_url": "https://github.com/okinamo-o/Velox/releases/download/v134.0.6998.182/Velox-v134.0.6998.182-Portable-x64.zip"
+        "filename": "Velox-v134.0.6998.183-Portable-x64.zip",
+        "sha256": "17971FE719435F046203D9AC79CC5394B9253058F5DAC88129E0BB81470BC589",
+        "download_url": "https://github.com/okinamo-o/Velox/releases/download/v134.0.6998.183/Velox-v134.0.6998.183-Portable-x64.zip"
     },
     "linux": {
         "quick_install": "curl -sSL https://raw.githubusercontent.com/okinamo-o/Velox/main/scripts/velox-linux.sh | bash -s -- --wine",
         "script_url": "https://raw.githubusercontent.com/okinamo-o/Velox/main/scripts/velox-linux.sh"
     },
     "notes": [
+        "🌌 Customizable Spaces (Workspaces): Switch via Ctrl+1/2/3, double-click or right-click to rename with custom titles and quick preset chips",
+        "📝 New Tab Scratchpad & Focus Dashboard: Persistent quick notes, focus timer, RAM & shield statistics right on chrome://newtab",
         "⚡ Velox Shield intelligent tracker & ad blocking built-in",
         "🏝️ Opera One-style Tab Islands with automatic grouping & glowing headers",
         "🚀 Ultra hardware-accelerated Blink rendering engine",
