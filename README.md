@@ -13,7 +13,7 @@
 
 **Velox** is a next-generation desktop browser re-architected for raw speed, clean aesthetics, and zero distractions. Built upon custom-tuned Chromium 134, Velox strips away telemetry and background clutter while introducing deep system-level optimizations and modern workflows.
 
-[**Download for Windows**](https://github.com/okinamo-o/Velox/releases/latest/download/VeloxSetup.exe) • [**Download for Linux**](#-linux-installation) • [**Portable ZIP**](https://github.com/okinamo-o/Velox/releases/latest/download/Velox-v134.0.6998.183-Portable-x64.zip) • [**View Showcase Site**](dist/website/index.html)
+[**Download for Windows**](https://github.com/okinamo-o/Velox/releases/latest/download/VeloxSetup.exe) • [**Download for Linux**](#-linux-installation) • [**Portable ZIP**](https://github.com/okinamo-o/Velox/releases/latest/download/Velox-v134.0.6998.184-Portable-x64.zip) • [**View Showcase Site**](dist/website/index.html)
 
 </div>
 
@@ -64,7 +64,7 @@ Download and run the latest standalone setup:
 
 #### Option 2: Portable Edition (Zero Install)
 Download the portable ZIP archive, extract it anywhere (including a USB drive), and run `velox.exe`:
-👉 **[Download Portable ZIP](https://github.com/okinamo-o/Velox/releases/latest/download/Velox-v134.0.6998.183-Portable-x64.zip)**
+👉 **[Download Portable ZIP](https://github.com/okinamo-o/Velox/releases/latest/download/Velox-v134.0.6998.184-Portable-x64.zip)**
 
 #### Option 3: Windows Package Manager (`winget`)
 Install in one command via PowerShell or Command Prompt:

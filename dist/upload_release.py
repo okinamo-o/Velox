@@ -25,14 +25,16 @@ def main():
     }
 
     # 1. Create or get existing release
-    version = sys.argv[1] if len(sys.argv) > 1 else "134.0.6998.183"
+    version = sys.argv[1] if len(sys.argv) > 1 else "134.0.6998.184"
     tag = f"v{version}"
-    name = f"Velox Browser v{version} (Customizable Spaces & Focus Dashboard)"
+    name = f"Velox Browser v{version} (Flicker-Free Split Screen & Docking Stability)"
     body = (
         f"## Velox Browser v{version}\n\n"
         "### 🌟 New Features & Enhancements\n"
+        "- **Flicker-Free Split Screen**: Redesigned split-screen view architecture with fixed pane slots and stable native view attachment. Switching focus between split panes (by clicking or keyboard navigation) is now completely instant and flicker-free with zero blank flashes.\n"
+        "- **Cross-Window Tab Docking**: Fixed split-partner off-by-one edge case preventing crashes when tearing off a tab into a new window and dragging it back into the main tab strip.\n"
         "- **Customizable Spaces (Workspaces)**: Effortlessly organize tabs into isolated workflows (e.g. Work, Gaming, Personal, Dev, Study). Switch instantly with hotkeys (`Ctrl+1/2/3`, `Alt+1/2/3`) or the toolbar pill. Double-click or right-click any Space to rename it with custom names and quick preset chips. Inactive space tabs are automatically frozen to save 0 KB wasted RAM.\n"
-        "- **New Tab Scratchpad & Focus Dashboard**: `chrome://newtab` now features a glassmorphic command center with a persistent quick scratchpad, focus session timer, and real-time shield & RAM statistics.\n"
+        "- **New Tab Scratchpad & Focus Dashboard**: `chrome://newtab` features a glassmorphic command center with a persistent quick scratchpad, focus session timer, and real-time shield & RAM statistics.\n"
         "- **Comet-Style Inactive Tabs**: Inactive tabs blend seamlessly into the window frame background with zero vertical separator lines; hovering reveals a gentle translucent glass pill. Active tabs stand out as glowing rounded cyber bubbles.\n"
         "- **Tab Audio Favicon Swap**: When audio is playing, the speaker indicator cleanly replaces the website icon in its exact spot without overlapping. Favicon immediately reappears when audio stops.\n"
         "- **Linux 1-Click Installation**: Standalone runner script with desktop launcher integration for Linux users.\n"
