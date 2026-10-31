@@ -7,7 +7,7 @@ index f6b3022200..2637d69448 100644
  MINOR=0
  BUILD=6998
 -PATCH=178
-+PATCH=184
++PATCH=185
 diff --git a/chrome/browser/ui/tabs/tab_strip_model.cc b/chrome/browser/ui/tabs/tab_strip_model.cc
 index cf154ae45c..572816ab5d 100644
 --- a/chrome/browser/ui/tabs/tab_strip_model.cc

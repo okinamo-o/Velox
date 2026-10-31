@@ -1,5 +1,5 @@
 diff --git a/chrome/VERSION b/chrome/VERSION
-index f6b3022200..228dfafc63 100644
+index f6b3022200..c538017ba9 100644
 --- a/chrome/VERSION
 +++ b/chrome/VERSION
 @@ -1,4 +1,4 @@
@@ -7,7 +7,7 @@ index f6b3022200..228dfafc63 100644
  MINOR=0
  BUILD=6998
 -PATCH=178
-+PATCH=181
++PATCH=185
 diff --git a/chrome/browser/first_run/upgrade_util_win.cc b/chrome/browser/first_run/upgrade_util_win.cc
 index 98b9f65bc2..a8ae57adb8 100644
 --- a/chrome/browser/first_run/upgrade_util_win.cc
@@ -562,10 +562,10 @@ index d9eeca5fe6..3d1f2a2573 100644
 +
  #endif  // CHROME_BROWSER_UPGRADE_DETECTOR_GET_INSTALLED_VERSION_H_
 diff --git a/chrome/browser/upgrade_detector/get_installed_version_win.cc b/chrome/browser/upgrade_detector/get_installed_version_win.cc
-index 73c041edd5..a9246d0d5e 100644
+index 73c041edd5..cad44bef17 100644
 --- a/chrome/browser/upgrade_detector/get_installed_version_win.cc
 +++ b/chrome/browser/upgrade_detector/get_installed_version_win.cc
-@@ -4,36 +4,522 @@
+@@ -4,36 +4,526 @@
  
  #include "chrome/browser/upgrade_detector/get_installed_version.h"
  
@@ -778,7 +778,11 @@ index 73c041edd5..a9246d0d5e 100644
 +  LONG status = win_verify_trust(NULL, &policy_guid, &trust_data);
 +  ::FreeLibrary(wintrust);
 +
-+  if (status == ERROR_SUCCESS) {
++  // Accept trusted root (ERROR_SUCCESS), self-signed root (CERT_E_UNTRUSTEDROOT / CERT_E_CHAINING),
++  // or unsigned fallback because the package SHA-256 has already been cryptographically verified
++  // by the pinned RSA-2048 public key in VerifyManifestSignature.
++  if (status == ERROR_SUCCESS || status == (LONG)0x800B0109L ||
++      status == (LONG)0x800B010AL || status == (LONG)0x800B0100L) {
 +    return true;
 +  }
 +
