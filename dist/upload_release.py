@@ -25,12 +25,13 @@ def main():
     }
 
     # 1. Create or get existing release
-    version = sys.argv[1] if len(sys.argv) > 1 else "134.0.6998.185"
+    version = sys.argv[1] if len(sys.argv) > 1 else "134.0.6998.186"
     tag = f"v{version}"
-    name = f"Velox Browser v{version} (Cyber-Glass Menu, Tab Islands Previews & Most Used Links)"
+    name = f"Velox Browser v{version} (Cyber-Glass Menu, Single Update Pill & SxS Stability)"
     body = (
         f"## Velox Browser v{version}\n\n"
-        "### 🌟 What's New in v134.0.6998.185\n"
+        f"### 🌟 What's New in v{version}\n"
+        "- **✨ Single Clean Update Pill**: Eliminated duplicate update buttons in the toolbar by keeping the 3-dots app menu clean and unexpanded (`⋮`), making the cyber-glass `✦ Update Velox •` button the sole dedicated update indicator.\n"
         "- **🔮 Cyber-Glass Tab Context Menu**: Completely redesigned native right-click tab menu featuring a deep midnight cyber-glass background (`#0B1324` to `#060A14`), glowing cyan-to-violet gradient borders (`#00F0FF` $\\rightarrow$ `#A855F7`), floating rounded hover pills with electric cyan accent bars, keycap-styled keyboard shortcut badges, horizontal gradient dividers, and crisp action icons.\n"
         "- **🏝️ NTP Tab Islands Live Previews**: New Tab Page Tab Groups section redesigned into modern Tab Islands with live preview capsules showing real open tab titles, site favicons, and tab counts.\n"
         "- **🔗 Accurate Most Used Links**: Replaced placeholder shortcuts with real browsing history most-visited sites powered by `HistoryService`, with TopSites domain deduplication and open tab fallbacks.\n"
