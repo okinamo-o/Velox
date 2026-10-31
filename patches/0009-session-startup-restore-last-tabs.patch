@@ -15,7 +15,7 @@ index 266dc5f675..2b15c4a556 100644
  }
  
  // static
-@@ -114,8 +111,16 @@ SessionStartupPref SessionStartupPref::GetStartupPref(
+@@ -114,8 +113,13 @@ SessionStartupPref SessionStartupPref::GetStartupPref(
      const PrefService* prefs) {
    DCHECK(prefs);
  
@@ -26,9 +26,6 @@ index 266dc5f675..2b15c4a556 100644
 +  SessionStartupPref::Type startup_type = GetDefaultStartupType();
 +  if (pref_restore && pref_restore->HasUserSetting()) {
 +    startup_type = PrefValueToType(prefs->GetInteger(prefs::kRestoreOnStartup));
-+    if (startup_type == SessionStartupPref::DEFAULT) {
-+      startup_type = SessionStartupPref::LAST;
-+    }
 +  }
 +  SessionStartupPref pref(startup_type);
  

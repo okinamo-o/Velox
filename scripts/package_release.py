@@ -26,7 +26,7 @@ def compute_hash(file_path, algorithm="sha256"):
             hasher.update(chunk)
     return hasher.hexdigest()
 
-def package_portable_zip(target_zip_path, version="134.0.6998.178"):
+def package_portable_zip(target_zip_path, version="134.0.6998.184"):
     """Creates a standalone portable ZIP package of VELOX."""
     target_zip_path = Path(target_zip_path)
     target_zip_path.parent.mkdir(parents=True, exist_ok=True)
@@ -80,7 +80,7 @@ def generate_checksum_manifests(release_dir):
 
 def main():
     parser = argparse.ArgumentParser(description="VELOX Release Packaging Tool")
-    parser.add_argument("--version", default="134.0.6998.178", help="Release version string")
+    parser.add_argument("--version", default="134.0.6998.184", help="Release version string")
     parser.add_argument("--portable", action="store_true", help="Generate portable ZIP package")
     parser.add_argument("--out-dir", default=str(RELEASES_DIR), help="Output releases directory")
     args = parser.parse_args()

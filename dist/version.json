@@ -7,7 +7,8 @@
         "filename": "VeloxSetup.exe",
         "sha256": "D1E23BA66A40ED4FB0FE3BE3DE5535AD24112AEDACB4B79AB4CC62F04402559E",
         "size_bytes": 142318080,
-        "download_url": "https://github.com/okinamo-o/Velox/releases/download/v134.0.6998.184/VeloxSetup.exe"
+        "download_url": "https://github.com/okinamo-o/Velox/releases/download/v134.0.6998.184/VeloxSetup.exe",
+        "signature": "qbkCL6fx4+9BK1XSZmAyCPHjLWhAo9K2lukqexpbn4dQlIEQ75Df6Uh+RWgX0W0XK/QaRdtRDZhkFaCy8V+G534Ss+VxnK09D1JYMz5KQrHOFzQ/ANB2opqfIFZGowfymUiKbERyyM0EqAEkE/ACHtAf7tmLUktj69OjfeHJAIuJosZDgr093+JB1Jn9Ki45RP6v0JdS10Wb4UNFNFNjdZTh1FEuyCS4MYXFecFNEH0SJ8pZFbfXCYL0LpVPBN+f8UomZmOL6C0Ree+eLw3/88B6gzdqlOLKCtJXMC9kHBWp2MwndBRgioB573+ZeTDUARf13+mG3/DFcz5rk0i7OQ=="
     },
     "portable": {
         "filename": "Velox-v134.0.6998.184-Portable-x64.zip",

@@ -119,7 +119,7 @@ def download_installer(url, target_path, expected_sha256):
 
     return True
 
-def install_update(installer_path, silent=True, allow_unsigned=False):
+def install_update(installer_path, silent=True, allow_unsigned=False, expected_publisher="VELOX"):
     """Executes the downloaded VELOX installer after verifying Authenticode signature."""
     installer_path = Path(installer_path).resolve()
     if not installer_path.exists():
@@ -127,11 +127,14 @@ def install_update(installer_path, silent=True, allow_unsigned=False):
         return False
 
     if not allow_unsigned:
-        print("Verifying Windows Authenticode signature on installer binary...")
+        print(f"Verifying Windows Authenticode signature on installer binary (expected publisher: '{expected_publisher}')...")
         try:
             sys.path.insert(0, str(Path(__file__).resolve().parent))
             import sign_binaries
-            is_signed, sig_msg = sign_binaries.verify_signature(installer_path)
+            is_signed, sig_msg = sign_binaries.verify_signature(
+                installer_path,
+                expected_publisher=expected_publisher
+            )
             if not is_signed:
                 print(f"SECURITY ERROR: Installer failed Authenticode verification: {sig_msg}")
                 print("Aborting installation to protect system integrity.")
@@ -163,6 +166,7 @@ def main():
     parser.add_argument("--download", action="store_true", help="Download the latest installer if available")
     parser.add_argument("--install", action="store_true", help="Download and install the latest update silently")
     parser.add_argument("--allow-unsigned", action="store_true", help="Allow running unsigned installer (for test/dev only)")
+    parser.add_argument("--expected-publisher", default="VELOX", help="Expected Authenticode publisher substring")
     parser.add_argument("--output-dir", default=None, help="Directory to save downloaded installer")
     parser.add_argument("--json", action="store_true", help="Output result as JSON")
     args = parser.parse_args()
@@ -237,7 +241,12 @@ def main():
 
         if args.install:
             print("\nApplying update...")
-            return 0 if install_update(out_file, silent=True, allow_unsigned=args.allow_unsigned) else 1
+            return 0 if install_update(
+                out_file,
+                silent=True,
+                allow_unsigned=args.allow_unsigned,
+                expected_publisher=args.expected_publisher
+            ) else 1
 
     return 0
 

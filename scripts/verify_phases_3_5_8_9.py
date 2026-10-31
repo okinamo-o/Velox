@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import tempfile
 """
 VELOX Phases 3/5/8/9 Unified Runtime Verification Script
 
@@ -20,7 +21,7 @@ from pathlib import Path
 import aiohttp
 
 VELOX_EXE = r"D:\Velox\src\out\Default\velox.exe"
-USER_DATA_DIR = r"D:\Velox\test-profile-phases"
+USER_DATA_DIR = os.path.join(tempfile.gettempdir(), "velox-test-profile-phases")
 MV3_EXT_DIR = r"D:\Velox\tests\extensions\fixtures\mv3_sample"
 DEBUG_PORT = 9555
 RESULTS = {}
@@ -539,12 +540,9 @@ async def main():
     print("|  VELOX UNIFIED RUNTIME VERIFICATION: PHASES 3, 5, 8, 9            |")
     print("+======================================================================+")
 
-    # Clean profile
-    if os.path.exists(USER_DATA_DIR):
-        try:
-            shutil.rmtree(USER_DATA_DIR)
-        except:
-            pass
+    # Create unique isolated disposable temporary profile
+    global USER_DATA_DIR
+    USER_DATA_DIR = tempfile.mkdtemp(prefix="velox-test-profile-phases-")
 
     # Launch VELOX with MV3 test extension
     cmd = [
@@ -631,6 +629,11 @@ async def main():
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             proc.kill()
+        if USER_DATA_DIR and os.path.exists(USER_DATA_DIR):
+            try:
+                shutil.rmtree(USER_DATA_DIR, ignore_errors=True)
+            except Exception:
+                pass
 
 if __name__ == "__main__":
     success = asyncio.run(main())

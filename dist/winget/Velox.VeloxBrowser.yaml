@@ -1,9 +1,9 @@
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.singleton.1.6.0.schema.json
 PackageIdentifier: Velox.VeloxBrowser
-PackageVersion: 134.0.6998.178
+PackageVersion: 134.0.6998.184
 PackageName: Velox Browser
 Publisher: Velox Team
-Author: Louay
+Author: Velox Authors
 License: BSD-3-Clause
 ShortDescription: High-performance, shielded web browser with native tab islands and hardware acceleration.
 Description: |
@@ -20,8 +20,8 @@ Tags:
 Installers:
   - Architecture: x64
     InstallerType: exe
-    InstallerUrl: https://github.com/Louay/velox/releases/download/v134.0.6998.178/VeloxSetup.exe
-    InstallerSha256: BB91F688336AC11DB6DF73AEA43F0E09EDB50AA7DC1C8C76AFA8EB7F3D02AE7D
+    InstallerUrl: https://github.com/okinamo-o/Velox/releases/download/v134.0.6998.184/VeloxSetup.exe
+    InstallerSha256: D1E23BA66A40ED4FB0FE3BE3DE5535AD24112AEDACB4B79AB4CC62F04402559E
     InstallerSwitches:
       Silent: --do-not-launch-chrome
       SilentWithProgress: --do-not-launch-chrome

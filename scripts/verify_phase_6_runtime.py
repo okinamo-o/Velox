@@ -15,8 +15,9 @@ import time
 from pathlib import Path
 import aiohttp
 
+import tempfile
+
 VELOX_EXE = r"D:\Velox\src\out\Default\velox.exe"
-USER_DATA_DIR = r"D:\Velox\test-profile-phase6"
 DEBUG_PORT = 9444
 
 async def cdp_call(ws, method, params=None, msg_id=1):
@@ -33,18 +34,14 @@ async def run_verification():
     print("VELOX PHASE 6 RUNTIME VERIFICATION: TAB LIFECYCLE & RAM OPTIMIZATION")
     print("=" * 70)
 
-    # 1. Clean profile directory
-    if os.path.exists(USER_DATA_DIR):
-        try:
-            shutil.rmtree(USER_DATA_DIR)
-        except Exception as e:
-            print(f"[WARN] Failed to delete existing profile dir: {e}")
+    # 1. Create unique disposable test profile
+    user_data_dir = tempfile.mkdtemp(prefix="velox-test-profile-phase6-")
 
     # 2. Launch VELOX
     cmd = [
         VELOX_EXE,
         f"--remote-debugging-port={DEBUG_PORT}",
-        f"--user-data-dir={USER_DATA_DIR}",
+        f"--user-data-dir={user_data_dir}",
         "--no-first-run",
         "--no-default-browser-check",
         "velox://performance"
@@ -251,7 +248,7 @@ async def run_verification():
 
         # 7. Check Crashpad reports
         print("[6/6] Verifying Crashpad minidumps & process health...")
-        crashpad_dir = Path(USER_DATA_DIR) / "Crashpad" / "reports"
+        crashpad_dir = Path(user_data_dir) / "Crashpad" / "reports"
         crashes = list(crashpad_dir.glob("*.dmp")) if crashpad_dir.exists() else []
         print(f"      Crashpad reports found: {len(crashes)}")
         if len(crashes) == 0:
@@ -273,6 +270,11 @@ async def run_verification():
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             proc.kill()
+        if os.path.exists(user_data_dir):
+            try:
+                shutil.rmtree(user_data_dir)
+            except Exception:
+                pass
 
 if __name__ == "__main__":
     success = asyncio.run(run_verification())

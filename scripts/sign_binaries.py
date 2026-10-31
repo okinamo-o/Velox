@@ -39,7 +39,7 @@ def find_signtool():
 
     return None
 
-def verify_signature(binary_path, signtool_path=None):
+def verify_signature(binary_path, signtool_path=None, allow_self_signed=False, expected_publisher=None):
     """Verifies Authenticode signature using signtool.exe or PowerShell Get-AuthenticodeSignature."""
     binary_path = Path(binary_path).resolve()
     if not binary_path.exists():
@@ -54,30 +54,49 @@ def verify_signature(binary_path, signtool_path=None):
             text=True
         )
         if res_pa.returncode == 0:
+            if expected_publisher and expected_publisher not in res_pa.stdout:
+                return False, f"Signed, but publisher does not match '{expected_publisher}'"
             return True, "Valid Authenticode signature (Trusted Root CA)"
 
-        # Check if signed but untrusted root (e.g. self-signed test cert)
-        res_v = subprocess.run(
-            [str(signtool), "verify", "/v", str(binary_path)],
-            capture_output=True,
-            text=True
-        )
-        if "Signing Certificate Chain" in res_v.stdout:
-            # Extract Subject
-            for line in res_v.stdout.splitlines():
-                if "Issued to:" in line:
-                    signer = line.strip().replace("Issued to: ", "")
-                    return True, f"Signed by [{signer}] (Self-Signed / Private Root)"
-            return True, "Signed (Self-Signed / Private Root)"
+        # Check if signed but untrusted root (e.g. self-signed test cert) only when explicitly permitted
+        if allow_self_signed:
+            res_v = subprocess.run(
+                [str(signtool), "verify", "/v", str(binary_path)],
+                capture_output=True,
+                text=True
+            )
+            if "Signing Certificate Chain" in res_v.stdout:
+                signer = "Unknown"
+                for line in res_v.stdout.splitlines():
+                    if "Issued to:" in line:
+                        signer = line.strip().replace("Issued to: ", "")
+                        break
+                if expected_publisher and expected_publisher not in signer:
+                    return False, f"Signed by [{signer}], does not match expected [{expected_publisher}]"
+                return True, f"Signed by [{signer}] (Self-Signed / Private Root)"
 
-        return False, "Unsigned binary"
+        return False, "Unsigned or untrusted binary"
     else:
         # Fallback to PowerShell
-        ps_cmd = f"(Get-AuthenticodeSignature -FilePath '{binary_path}').Status.ToString()"
+        ps_cmd = (
+            f"$sig = Get-AuthenticodeSignature -FilePath '{binary_path}'; "
+            f"$status = $sig.Status.ToString(); "
+            f"$subject = if ($sig.SignerCertificate) {{ $sig.SignerCertificate.Subject }} else {{ '' }}; "
+            f"Write-Output ($status + '|||' + $subject)"
+        )
         res = subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd], capture_output=True, text=True)
-        status = res.stdout.strip()
-        is_valid = status in ("Valid", "UnknownError")
-        return is_valid, f"Status: {status}"
+        out = res.stdout.strip()
+        parts = out.split("|||", 1)
+        status = parts[0] if parts else ""
+        subject = parts[1] if len(parts) > 1 else ""
+
+        if status != "Valid":
+            return False, f"Invalid Authenticode status: {status}"
+
+        if expected_publisher and expected_publisher.lower() not in subject.lower():
+            return False, f"Signed, but publisher '{subject}' does not match expected '{expected_publisher}'"
+
+        return True, f"Valid Authenticode signature ({subject})"
 
 def sign_binary(binary_path, signtool, cert_file=None, cert_password=None,
                 thumbprint=None, subject_name=None, timestamp_url=DEFAULT_TIMESTAMP_URL):
@@ -147,6 +166,9 @@ def main():
     parser.add_argument("--timestamp-url", default=DEFAULT_TIMESTAMP_URL, help="RFC 3161 Timestamp URL")
     parser.add_argument("--target", default=None, help="Specific file to sign or verify")
     parser.add_argument("--verify-only", action="store_true", help="Only verify existing signatures")
+    parser.add_argument("--allow-self-signed", action="store_true", help="Allow self-signed test certificates during verification")
+    parser.add_argument("--expected-publisher", default=None, help="Expected publisher substring to match during verification")
+    parser.add_argument("--require-all-targets", action="store_true", help="Fail verification if any default release binary is missing")
     parser.add_argument("--create-test-cert", default=None, help="Generate a self-signed PFX test certificate at given path")
     args = parser.parse_args()
 
@@ -167,7 +189,16 @@ def main():
         repo_root / "src" / "out" / "Default" / "velox.exe",
         repo_root / "src" / "out" / "Default" / "setup.exe",
         repo_root / "src" / "out" / "Default" / "velox_installer.exe",
+        repo_root / "src" / "out" / "Default" / "mini_installer.exe",
     ]
+
+    if args.require_all_targets and not args.target:
+        missing = [p for p in default_targets if not p.exists()]
+        if missing:
+            print("[ERROR] Required release binaries are missing:")
+            for path in missing:
+                print(f"  {path}")
+            return 1
 
     targets = [Path(args.target)] if args.target else [p for p in default_targets if p.exists()]
 
@@ -175,8 +206,17 @@ def main():
         print(f"\nVerifying signatures for {len(targets)} binaries:")
         all_valid = True
         for t in targets:
-            valid, msg = verify_signature(t, signtool)
-            status_str = "[SIGNED & VALID]" if valid else "[UNSIGNED / INVALID]"
+            valid, msg = verify_signature(
+                t, signtool,
+                allow_self_signed=args.allow_self_signed,
+                expected_publisher=args.expected_publisher
+            )
+            if not valid:
+                status_str = "[UNTRUSTED / INVALID]"
+            elif "Self-Signed / Private Root" in msg:
+                status_str = "[SELF-SIGNED / DEV ONLY]"
+            else:
+                status_str = "[SIGNED & TRUSTED]"
             print(f"  {status_str} {t.name}")
             if not valid:
                 all_valid = False

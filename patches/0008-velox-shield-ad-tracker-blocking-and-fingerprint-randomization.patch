@@ -11,22 +11,6 @@ index 678e42c96f..2b6c7d9f04 100644
  #include "chrome/common/ppapi_utils.h"
  #include "chrome/common/pref_names.h"
  #include "chrome/common/profiler/main_thread_stack_sampling_profiler.h"
-@@ -2232,6 +2234,7 @@ void ChromeContentBrowserClient::GetAdditionalWebUISchemes(
-   additional_schemes->emplace_back(chrome::kChromeSearchScheme);
-   additional_schemes->emplace_back(dom_distiller::kDomDistillerScheme);
-   additional_schemes->emplace_back(content::kChromeDevToolsScheme);
-+  additional_schemes->emplace_back(content::kVeloxUIScheme);
- }
- 
- bool ChromeContentBrowserClient::IsInternalScheme(const GURL& url) {
-@@ -4851,6 +4854,7 @@ void ChromeContentBrowserClient::GetAdditionalAllowedSchemesForFileSystem(
-   additional_allowed_schemes->push_back(content::kChromeUIScheme);
-   additional_allowed_schemes->push_back(content::kChromeUIUntrustedScheme);
-   additional_allowed_schemes->push_back(chrome::kIsolatedAppScheme);
-+  additional_allowed_schemes->push_back(content::kVeloxUIScheme);
-   for (auto& extra_part : extra_parts_) {
-     extra_part->GetAdditionalAllowedSchemesForFileSystem(
-         additional_allowed_schemes);
 @@ -5229,10 +5233,44 @@ void ChromeContentBrowserClient::RemovePresentationObserver(
    }
  }

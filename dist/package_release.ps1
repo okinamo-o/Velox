@@ -6,13 +6,17 @@
 #>
 
 param(
-    [string]$Version = "134.0.6998.180",
+    [string]$Version = "134.0.6998.184",
     [string]$SrcDir = "D:\Velox\src",
     [string]$DistDir = "D:\Velox\dist",
     [switch]$Rebuild
 )
 
 $ErrorActionPreference = "Stop"
+
+if ([string]::IsNullOrWhiteSpace($env:VELOX_MANIFEST_SIGNING_CERT_THUMBPRINT)) {
+    throw "Set VELOX_MANIFEST_SIGNING_CERT_THUMBPRINT before packaging a release. See docs/manifest-signing.md."
+}
 
 Write-Host "==============================================" -ForegroundColor Cyan
 Write-Host "       VELOX BROWSER RELEASE PACKAGER        " -ForegroundColor Cyan
@@ -40,6 +44,14 @@ if ($Rebuild -or !(Test-Path $InstallerSrc)) {
     }
 }
 
+# Refuse to package binaries that are unsigned, untrusted, or signed by a
+# different publisher. Local self-signed test certificates are not releasable.
+$SignatureVerifier = Join-Path $PSScriptRoot "..\scripts\sign_binaries.py"
+& python $SignatureVerifier --verify-only --expected-publisher "VELOX" --require-all-targets
+if ($LASTEXITCODE -ne 0) {
+    throw "Release packaging stopped because one or more binaries failed trusted Authenticode verification."
+}
+
 # 2. Stage VeloxSetup.exe
 $SetupTarget = Join-Path $DistDir "VeloxSetup.exe"
 Write-Host "`n[*] Staging VeloxSetup.exe..." -ForegroundColor Green
@@ -52,7 +64,10 @@ Write-Host "    Size : $SetupSizeMB MB ($SetupSize bytes)" -ForegroundColor Gray
 Write-Host "    SHA256 : $SetupHash" -ForegroundColor Gray
 
 # 3. Create Portable Zip
-$AppDir = "C:\Users\Louay\AppData\Local\Velox\Application"
+if (!$env:LOCALAPPDATA) {
+    throw "LOCALAPPDATA environment variable is not defined."
+}
+$AppDir = Join-Path $env:LOCALAPPDATA "Velox\Application"
 $PortableZip = Join-Path $DistDir "Velox-v$Version-Portable-x64.zip"
 
 if (Test-Path $AppDir) {
@@ -81,6 +96,9 @@ if (Test-Path $AppDir) {
 # 4. Generate Auto-Update Manifest (version.json)
 $VersionManifest = Join-Path $DistDir "version.json"
 Write-Host "`n[*] Generating Update Manifest (version.json)..." -ForegroundColor Green
+
+$DownloadUrl = "https://github.com/okinamo-o/Velox/releases/download/v$Version/VeloxSetup.exe"
+
 $ManifestData = [ordered]@{
     product       = "Velox Browser"
     version       = $Version
@@ -90,7 +108,8 @@ $ManifestData = [ordered]@{
         filename    = "VeloxSetup.exe"
         sha256      = $SetupHash
         size_bytes  = $SetupSize
-        download_url= "https://github.com/okinamo-o/Velox/releases/download/v$Version/VeloxSetup.exe"
+        download_url= $DownloadUrl
+        signature   = ""
     }
     portable      = [ordered]@{
         filename    = "Velox-v$Version-Portable-x64.zip"
@@ -106,7 +125,17 @@ $ManifestData = [ordered]@{
     )
 }
 
-$ManifestData | ConvertTo-Json -Depth 5 | Set-Content -Path $VersionManifest -Encoding UTF8
+$ManifestJson = ConvertTo-Json -InputObject $ManifestData -Depth 5
+[System.IO.File]::WriteAllText($VersionManifest, $ManifestJson, [System.Text.UTF8Encoding]::new($false))
+try {
+    & (Join-Path $PSScriptRoot "..\scripts\sign_release_manifest.ps1") -ManifestPath $VersionManifest
+} catch {
+    throw "Release manifest signing failed: $_"
+}
+$WebsiteManifest = Join-Path $DistDir "website\version.json"
+if (Test-Path (Split-Path $WebsiteManifest -Parent)) {
+    Copy-Item -LiteralPath $VersionManifest -Destination $WebsiteManifest -Force
+}
 Write-Host "    Manifest written to: $VersionManifest" -ForegroundColor Gray
 
 # 5. Output Release Checklist
