@@ -1,5 +1,5 @@
 diff --git a/chrome/browser/resources/new_tab_page/app.css b/chrome/browser/resources/new_tab_page/app.css
-index 39980d76da..9a5358121a 100644
+index 39980d76da..9a6416860a 100644
 --- a/chrome/browser/resources/new_tab_page/app.css
 +++ b/chrome/browser/resources/new_tab_page/app.css
 @@ -11,16 +11,19 @@
@@ -60,7 +60,7 @@ index 39980d76da..9a5358121a 100644
    }
  }
  
-@@ -99,25 +103,68 @@ cr-most-visited {
+@@ -99,25 +103,69 @@ cr-most-visited {
  }
  
  #content {
@@ -99,6 +99,7 @@ index 39980d76da..9a5358121a 100644
 +}
 +
 +.velox-lucide-icon {
++  position: static !important;
 +  display: inline-block;
 +  vertical-align: middle;
 +  flex-shrink: 0;
@@ -136,7 +137,7 @@ index 39980d76da..9a5358121a 100644
  }
  
  ntp-modules {
-@@ -145,6 +192,7 @@ ntp-middle-slot-promo {
+@@ -145,6 +193,7 @@ ntp-middle-slot-promo {
  }
  
  cr-searchbox {
@@ -144,7 +145,7 @@ index 39980d76da..9a5358121a 100644
    visibility: hidden;
  }
  
-@@ -213,13 +261,42 @@ ntp-middle-slot-promo:not([hidden]) ~ #modules {
+@@ -213,13 +262,42 @@ ntp-middle-slot-promo:not([hidden]) ~ #modules {
  
  .customize-button {
    --cr-button-height: 32px;
@@ -191,7 +192,28 @@ index 39980d76da..9a5358121a 100644
  }
  
  :host([show-background-image_]) #customizeButton,
-@@ -413,3 +490,1289 @@ ntp-lens-upload-dialog {
+@@ -390,10 +468,19 @@ while the icon has a color rule of it's own. */
+   width: 1px;
+ }
+ 
+-svg {
++svg:not(#veloxLayoutContainer svg):not(.velox-lucide-icon):not(.velox-qa-header-icon) {
+   position: fixed;
+ }
+ 
++#veloxLayoutContainer svg,
++.velox-lucide-icon,
++.velox-qa-header-icon {
++  position: static !important;
++  display: inline-block !important;
++  vertical-align: middle !important;
++  flex-shrink: 0 !important;
++}
++
+ ntp-lens-upload-dialog {
+   left: 0;
+   position: absolute;
+@@ -413,3 +500,1302 @@ ntp-lens-upload-dialog {
  #microsoftAuth {
    display: none;
  }
@@ -498,8 +520,21 @@ index 39980d76da..9a5358121a 100644
 +}
 +
 +.velox-stat-icon-mini {
++  display: inline-flex;
++  align-items: center;
++  justify-content: center;
 +  color: #3b82f6;
 +  font-size: 12px;
++  flex-shrink: 0;
++}
++
++.velox-widget-title-group {
++  display: flex;
++  align-items: center;
++  gap: 8px;
++  font-size: 12px;
++  font-weight: 700;
++  color: #f1f5f9;
 +}
 +
 +.velox-space-summary-tip {
@@ -1482,10 +1517,10 @@ index 39980d76da..9a5358121a 100644
 +  }
 +}
 diff --git a/chrome/browser/resources/new_tab_page/app.html b/chrome/browser/resources/new_tab_page/app.html
-index f7b589a1a8..03f3d7e089 100644
+index f7b589a1a8..75ec32152a 100644
 --- a/chrome/browser/resources/new_tab_page/app.html
 +++ b/chrome/browser/resources/new_tab_page/app.html
-@@ -2,129 +2,376 @@
+@@ -2,129 +2,380 @@
    ${this.lazyRender_ && this.microsoftModuleEnabled_ ? html`
      <iframe id="microsoftAuth" src="${this.microsoftAuthIframePath_}"></iframe>
    ` : ''}
@@ -1716,11 +1751,11 @@ index f7b589a1a8..03f3d7e089 100644
 +          <div class="velox-widget-header">
 +            <div class="velox-focus-title-group">
 +              <span class="velox-qa-title">
-+                <svg class="velox-lucide-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px;">
++                <svg class="velox-lucide-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 +                  <circle cx="12" cy="12" r="10"></circle>
 +                  <circle cx="12" cy="12" r="4"></circle>
 +                </svg>
-+                Focus & Notes
++                <span>Focus & Notes</span>
 +              </span>
 +              <span class="velox-focus-subtitle">Organize your thoughts and tasks</span>
 +            </div>
@@ -1888,11 +1923,13 @@ index f7b589a1a8..03f3d7e089 100644
 +        <!-- Continue browsing -->
 +        <div class="velox-widget velox-recent-widget">
 +          <div class="velox-widget-header">
-+            <svg class="velox-lucide-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-+              <circle cx="12" cy="12" r="10"></circle>
-+              <polyline points="12 6 12 12 16 14"></polyline>
-+            </svg>
-+            <span>Recent History</span>
++            <div class="velox-widget-title-group">
++              <svg class="velox-lucide-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
++                <circle cx="12" cy="12" r="10"></circle>
++                <polyline points="12 6 12 12 16 14"></polyline>
++              </svg>
++              <span>Recent History</span>
++            </div>
 +          </div>
 +          <a class="velox-history-link" href="chrome://history/">
 +            <span class="velox-history-icon">↗</span>
@@ -1907,10 +1944,12 @@ index f7b589a1a8..03f3d7e089 100644
 +        <!-- Most used Links -->
 +        <div class="velox-widget velox-mostused-widget">
 +          <div class="velox-widget-header">
-+            <svg class="velox-lucide-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-+              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
-+            </svg>
-+            <span>Pinned & Top Sites</span>
++            <div class="velox-widget-title-group">
++              <svg class="velox-lucide-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
++                <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
++              </svg>
++              <span>Pinned & Top Sites</span>
++            </div>
 +          </div>
 +          <div class="velox-widget-list">
 +            ${this.mostUsedLinks_.map((link, idx) => html`
