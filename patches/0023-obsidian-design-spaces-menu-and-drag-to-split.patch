@@ -5046,7 +5046,7 @@ index a81ff31023..7dc3a25b0f 100644
    if (location_icon_view_ && location_icon_view_->GetBackground()) {
      dark_mode =
 diff --git a/chrome/browser/ui/views/tabs/dragging/tab_drag_controller.cc b/chrome/browser/ui/views/tabs/dragging/tab_drag_controller.cc
-index babed73919..6b5e0de311 100644
+index babed73919..720a20d5a1 100644
 --- a/chrome/browser/ui/views/tabs/dragging/tab_drag_controller.cc
 +++ b/chrome/browser/ui/views/tabs/dragging/tab_drag_controller.cc
 @@ -511,6 +511,10 @@ TabDragController::Liveness TabDragController::Init(
@@ -5060,7 +5060,7 @@ index babed73919..6b5e0de311 100644
  
    ref->window_finder_ = std::make_unique<WindowFinder>();
  
-@@ -1261,6 +1265,44 @@ void TabDragController::MoveAttached(const gfx::Point& point_in_screen,
+@@ -1261,6 +1265,49 @@ void TabDragController::MoveAttached(const gfx::Point& point_in_screen,
  
    gfx::Point dragged_view_point = GetAttachedDragPoint(point_in_screen);
  
@@ -5078,7 +5078,12 @@ index babed73919..6b5e0de311 100644
 +      num_dragging_tabs() == 1) {
 +    gfx::Rect contents_bounds =
 +        current_bv->contents_container()->GetBoundsInScreen();
-+    if (contents_bounds.Contains(point_in_screen)) {
++    const int dy = point_in_screen.y() - start_point_in_screen_.y();
++    // Only enter split dock zone if user deliberately drags the tab downwards into
++    // the webpage area (at least 70px down from pickup, and at least 60px below toolbar).
++    // This ensures normal horizontal tab reordering is completely unaffected!
++    if (contents_bounds.Contains(point_in_screen) && dy >= 70 &&
++        point_in_screen.y() >= contents_bounds.y() + 60) {
 +      in_split_zone = true;
 +      const bool is_left =
 +          point_in_screen.x() <
@@ -5105,7 +5110,7 @@ index babed73919..6b5e0de311 100644
    const int threshold = attached_context_->GetHorizontalDragThreshold();
  
    std::vector<raw_ptr<TabSlotView, VectorExperimental>> views(
-@@ -1396,15 +1438,32 @@ TabDragController::Liveness TabDragController::GetTargetTabStripForPoint(
+@@ -1396,15 +1443,47 @@ TabDragController::Liveness TabDragController::GetTargetTabStripForPoint(
    }
  
    if (local_window && CanAttachTo(local_window)) {
@@ -5122,26 +5127,41 @@ index babed73919..6b5e0de311 100644
        return Liveness::ALIVE;
      }
 +
-+    // VELOX: Drag-to-Split-Screen gesture.
-+    // If dragging a single tab over the webpage content area of a window with 2+ tabs,
-+    // do not detach into a new window. Keep attached so split docking preview can be shown.
-+    if (browser_view && browser_view->contents_container() &&
-+        browser_view->browser() &&
-+        browser_view->browser()->tab_strip_model() &&
-+        browser_view->browser()->tab_strip_model()->count() >= 2 &&
-+        num_dragging_tabs() == 1) {
++    // VELOX: If the cursor is within the top region (tabstrip + toolbar + generous margin),
++    // stay attached to the tabstrip so normal horizontal reordering never detaches unexpectedly.
++    if (browser_view && browser_view->contents_container()) {
 +      gfx::Rect contents_bounds =
 +          browser_view->contents_container()->GetBoundsInScreen();
-+      if (contents_bounds.Contains(point_in_screen)) {
++      gfx::Rect window_bounds = browser_view->GetBoundsInScreen();
++
++      if (point_in_screen.y() < contents_bounds.y() + 60 &&
++          point_in_screen.x() >= window_bounds.x() &&
++          point_in_screen.x() <= window_bounds.right()) {
 +        *context = destination_tab_strip ? destination_tab_strip
 +                                         : source_context_.get();
 +        return Liveness::ALIVE;
++      }
++
++      // VELOX: Drag-to-Split-Screen gesture.
++      // If dragging a single tab deeply over the webpage content area of a window with 2+ tabs,
++      // keep attached so split docking preview can be shown.
++      if (browser_view->browser() &&
++          browser_view->browser()->tab_strip_model() &&
++          browser_view->browser()->tab_strip_model()->count() >= 2 &&
++          num_dragging_tabs() == 1) {
++        const int dy = point_in_screen.y() - start_point_in_screen_.y();
++        if (contents_bounds.Contains(point_in_screen) && dy >= 70 &&
++            point_in_screen.y() >= contents_bounds.y() + 60) {
++          *context = destination_tab_strip ? destination_tab_strip
++                                           : source_context_.get();
++          return Liveness::ALIVE;
++        }
 +      }
 +    }
    }
  
    *context = current_state_ == DragState::kDraggingWindow
-@@ -1848,6 +1907,14 @@ void TabDragController::EndDragImpl(EndDragType type) {
+@@ -1848,6 +1927,14 @@ void TabDragController::EndDragImpl(EndDragType type) {
    VLOG(1) << __func__ << " type=" << type
            << " state=" << static_cast<int>(current_state_);
  
@@ -5156,7 +5176,7 @@ index babed73919..6b5e0de311 100644
    DragState previous_state = current_state_;
    current_state_ = DragState::kStopped;
    attached_context_tabs_closed_tracker_.reset();
-@@ -2130,6 +2197,45 @@ void TabDragController::CompleteDrag() {
+@@ -2130,6 +2217,45 @@ void TabDragController::CompleteDrag() {
    CHECK_NE(current_state_, DragState::kNotStarted);
    CHECK(attached_context_);
  
