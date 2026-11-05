@@ -1,5 +1,5 @@
 diff --git a/chrome/browser/resources/new_tab_page/app.css b/chrome/browser/resources/new_tab_page/app.css
-index 39980d76da..54b6e2db80 100644
+index 39980d76da..9a5358121a 100644
 --- a/chrome/browser/resources/new_tab_page/app.css
 +++ b/chrome/browser/resources/new_tab_page/app.css
 @@ -11,16 +11,19 @@
@@ -144,7 +144,7 @@ index 39980d76da..54b6e2db80 100644
    visibility: hidden;
  }
  
-@@ -213,13 +261,33 @@ ntp-middle-slot-promo:not([hidden]) ~ #modules {
+@@ -213,13 +261,42 @@ ntp-middle-slot-promo:not([hidden]) ~ #modules {
  
  .customize-button {
    --cr-button-height: 32px;
@@ -152,37 +152,46 @@ index 39980d76da..54b6e2db80 100644
 -  border-radius: calc(.5 * var(--cr-button-height));
 -  box-shadow: 0 3px 6px rgba(0, 0, 0, .16), 0 1px 2px rgba(0, 0, 0, .23);
 -  font-weight: 400;
-+  background: rgba(15, 23, 42, 0.65) !important;
-+  border: 1px solid rgba(56, 189, 248, 0.35) !important;
++  background: rgba(14, 17, 23, 0.85) !important;
++  border: 1px solid rgba(255, 255, 255, 0.10) !important;
 +  border-radius: 20px !important;
-+  color: #38bdf8 !important;
++  color: #cbd5e1 !important;
 +  backdrop-filter: blur(12px);
 +  -webkit-backdrop-filter: blur(12px);
-+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35) !important;
++  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.40) !important;
 +  font-weight: 500;
    min-width: 32px;
    padding-inline-end: 16px;
    padding-inline-start: 16px;
-+  transition: all 0.25s ease !important;
++  transition: all 0.2s ease !important;
 +}
 +
 +.customize-button:hover {
-+  background: rgba(15, 23, 42, 0.85) !important;
-+  border-color: rgba(56, 189, 248, 0.70) !important;
-+  box-shadow: 0 0 16px rgba(0, 229, 255, 0.30), 0 6px 20px rgba(0, 0, 0, 0.45) !important;
++  background: #161b26 !important;
++  border-color: rgba(59, 130, 246, 0.50) !important;
++  color: #ffffff !important;
++  box-shadow: 0 0 16px rgba(59, 130, 246, 0.20), 0 6px 20px rgba(0, 0, 0, 0.50) !important;
 +  transform: translateY(-2px);
 +}
 +
 +#customizeIcon {
-+  --cr-icon-color: #38bdf8 !important;
++  --cr-icon-color: #94a3b8 !important;
++}
++
++.customize-button:hover #customizeIcon {
++  --cr-icon-color: #3b82f6 !important;
 +}
 +
 +#customizeText {
-+  color: #38bdf8 !important;
++  color: #cbd5e1 !important;
++}
++
++.customize-button:hover #customizeText {
++  color: #ffffff !important;
  }
  
  :host([show-background-image_]) #customizeButton,
-@@ -413,3 +481,1289 @@ ntp-lens-upload-dialog {
+@@ -413,3 +490,1289 @@ ntp-lens-upload-dialog {
  #microsoftAuth {
    display: none;
  }
@@ -263,7 +272,7 @@ index 39980d76da..54b6e2db80 100644
 +
 +.velox-hero-motto span {
 +  margin: 0 6px;
-+  color: #38bdf8;
++  color: #3b82f6;
 +}
 +
 +#mostVisited {
@@ -277,13 +286,13 @@ index 39980d76da..54b6e2db80 100644
 +#veloxQuickAccess {
 +  max-width: 720px;
 +  width: 100%;
-+  background: rgba(10, 16, 32, 0.65);
-+  border: 1px solid rgba(56, 189, 248, 0.20);
++  background: rgba(14, 17, 23, 0.75);
++  border: 1px solid rgba(255, 255, 255, 0.08);
 +  border-radius: 16px;
 +  padding: 10px 16px;
 +  backdrop-filter: blur(20px);
 +  -webkit-backdrop-filter: blur(20px);
-+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
++  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
 +  box-sizing: border-box;
 +}
 +
@@ -340,7 +349,7 @@ index 39980d76da..54b6e2db80 100644
 +
 +.velox-qa-link {
 +  font-size: 11.5px;
-+  color: #38bdf8;
++  color: #3b82f6;
 +  font-weight: 600;
 +  cursor: pointer;
 +  transition: color 0.15s ease;
@@ -464,28 +473,28 @@ index 39980d76da..54b6e2db80 100644
 +}
 +
 +.velox-space-card-summary {
-+  background: rgba(14, 22, 42, 0.45);
-+  border: 1px dashed rgba(56, 189, 248, 0.3);
++  background: rgba(14, 17, 23, 0.55);
++  border: 1px dashed rgba(255, 255, 255, 0.12);
 +  cursor: default;
 +}
 +
 +.velox-space-card-summary:hover {
 +  transform: none;
-+  background: rgba(14, 22, 42, 0.55);
-+  border-color: rgba(56, 189, 248, 0.5);
++  background: rgba(18, 22, 31, 0.65);
++  border-color: rgba(59, 130, 246, 0.40);
 +  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
 +}
 +
 +.summary-badge {
-+  background: rgba(56, 189, 248, 0.12) !important;
-+  border-color: rgba(56, 189, 248, 0.3) !important;
-+  color: #38bdf8 !important;
++  background: rgba(59, 130, 246, 0.10) !important;
++  border-color: rgba(59, 130, 246, 0.25) !important;
++  color: #60a5fa !important;
 +}
 +
 +.summary-count {
-+  background: rgba(56, 189, 248, 0.12) !important;
-+  border-color: rgba(56, 189, 248, 0.25) !important;
-+  color: #38bdf8 !important;
++  background: rgba(255, 255, 255, 0.06) !important;
++  border-color: rgba(255, 255, 255, 0.10) !important;
++  color: #94a3b8 !important;
 +}
 +
 +.velox-stat-icon-mini {
@@ -1348,8 +1357,8 @@ index 39980d76da..54b6e2db80 100644
 +  font-size: 10.5px;
 +  padding: 2px 7px;
 +  border-radius: 10px;
-+  background: rgba(56, 189, 248, 0.15);
-+  color: #38bdf8;
++  background: rgba(59, 130, 246, 0.12);
++  color: #60a5fa;
 +  font-weight: 600;
 +}
 +
@@ -1369,7 +1378,7 @@ index 39980d76da..54b6e2db80 100644
 +
 +.velox-space-card:hover .velox-group-arrow {
 +  transform: translateX(2px);
-+  color: #38bdf8;
++  color: #3b82f6;
 +}
 +
 +.velox-qa-empty {
@@ -1379,15 +1388,15 @@ index 39980d76da..54b6e2db80 100644
 +  gap: 12px;
 +  padding: 14px 18px;
 +  border-radius: 10px;
-+  background: rgba(18, 28, 52, 0.35);
-+  border: 1px dashed rgba(56, 189, 248, 0.25);
++  background: rgba(14, 17, 23, 0.50);
++  border: 1px dashed rgba(255, 255, 255, 0.10);
 +  color: #94a3b8;
 +  font-size: 12px;
 +}
 +
 +.velox-qa-empty-icon {
 +  font-size: 20px;
-+  color: #38bdf8;
++  color: #3b82f6;
 +}
 +
 +.velox-qa-empty-text b {
@@ -1473,10 +1482,10 @@ index 39980d76da..54b6e2db80 100644
 +  }
 +}
 diff --git a/chrome/browser/resources/new_tab_page/app.html b/chrome/browser/resources/new_tab_page/app.html
-index f7b589a1a8..1547879108 100644
+index f7b589a1a8..03f3d7e089 100644
 --- a/chrome/browser/resources/new_tab_page/app.html
 +++ b/chrome/browser/resources/new_tab_page/app.html
-@@ -2,129 +2,378 @@
+@@ -2,129 +2,376 @@
    ${this.lazyRender_ && this.microsoftModuleEnabled_ ? html`
      <iframe id="microsoftAuth" src="${this.microsoftAuthIframePath_}"></iframe>
    ` : ''}
@@ -1612,11 +1621,9 @@ index f7b589a1a8..1547879108 100644
 +        <div id="veloxQuickAccess">
 +          <div class="velox-qa-header">
 +            <div class="velox-qa-title-wrapper">
-+              <svg class="velox-qa-header-icon" width="20" height="20" viewBox="0 0 24 24" fill="none">
-+                <rect x="2" y="5" width="8" height="14" rx="4" fill="rgba(56, 189, 248, 0.25)" stroke="#38bdf8" stroke-width="1.8"/>
-+                <circle cx="6" cy="12" r="1.5" fill="#38bdf8"/>
-+                <rect x="12" y="5" width="10" height="14" rx="4" fill="rgba(192, 132, 252, 0.25)" stroke="#c084fc" stroke-width="1.8"/>
-+                <circle cx="17" cy="12" r="1.5" fill="#c084fc"/>
++              <svg class="velox-qa-header-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
++                <rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect>
++                <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path>
 +              </svg>
 +              <span class="velox-qa-title">Tab Groups</span>
 +            </div>
@@ -2569,6 +2576,104 @@ index e744ffca3b..93e945ab58 100644
  }
  
  #imageDoodle {
+diff --git a/chrome/browser/resources/new_tab_page/new_tab_page.html b/chrome/browser/resources/new_tab_page/new_tab_page.html
+index 6e26141616..0d84394cfd 100644
+--- a/chrome/browser/resources/new_tab_page/new_tab_page.html
++++ b/chrome/browser/resources/new_tab_page/new_tab_page.html
+@@ -4,9 +4,23 @@
+     <meta charset="utf-8">
+     <title>$i18n{title}</title>
+     <style>
+-      body {
+-        background: $i18n{backgroundColor};
++      html, body {
++        background-color: #090a0f;
+         margin: 0;
++        height: 100vh;
++        max-height: 100vh;
++        overflow: hidden !important;
++      }
++
++      /* Fixed Atmospheric Architectural Obsidian Backdrop */
++      #veloxAtmosphere {
++        position: fixed;
++        top: 0;
++        left: 0;
++        width: 100vw;
++        height: 100vh;
++        pointer-events: none;
++        z-index: 0;
+       }
+ 
+       #backgroundImage {
+@@ -17,14 +31,67 @@
+         top: 0;
+         visibility: hidden;
+         width: 100%;
++        z-index: 0;
+       }
+ 
+       [show-background-image] #backgroundImage {
+         visibility: visible;
+       }
++
++      [show-background-image] #veloxAtmosphere {
++        display: none;
++      }
++
++      /* Custom Modern Slate Scrollbars */
++      ::-webkit-scrollbar {
++        width: 6px;
++        height: 6px;
++      }
++      ::-webkit-scrollbar-track {
++        background: transparent;
++      }
++      ::-webkit-scrollbar-thumb {
++        background: rgba(255, 255, 255, 0.12);
++        border-radius: 4px;
++      }
++      ::-webkit-scrollbar-thumb:hover {
++        background: rgba(255, 255, 255, 0.25);
++      }
+     </style>
+   </head>
+   <body>
++    <!-- Architectural Obsidian Backdrop with Subtle Graphite Illumination and Precision Grid -->
++    <svg id="veloxAtmosphere" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">
++      <defs>
++        <!-- Deep Obsidian Sky Foundation -->
++        <linearGradient id="obsidianSky" x1="0%" y1="0%" x2="0%" y2="100%">
++          <stop offset="0%" stop-color="#0d1017" />
++          <stop offset="45%" stop-color="#090b10" />
++          <stop offset="100%" stop-color="#06070a" />
++        </linearGradient>
++
++        <!-- Subtle Top-Center Graphite Halo -->
++        <radialGradient id="topGlow" cx="50%" cy="0%" r="70%">
++          <stop offset="0%" stop-color="#1e293b" stop-opacity="0.30" />
++          <stop offset="40%" stop-color="#0f172a" stop-opacity="0.15" />
++          <stop offset="100%" stop-color="#090a0f" stop-opacity="0" />
++        </radialGradient>
++
++        <!-- Precision Architectural Micro-Grid Pattern -->
++        <pattern id="archGrid" width="48" height="48" patternUnits="userSpaceOnUse">
++          <circle cx="24" cy="24" r="1" fill="#94a3b8" fill-opacity="0.08" />
++        </pattern>
++      </defs>
++
++      <!-- Base Solid Slate Fill -->
++      <rect width="1920" height="1080" fill="url(#obsidianSky)" />
++
++      <!-- Architectural Grid Overlay -->
++      <rect width="1920" height="1080" fill="url(#archGrid)" />
++
++      <!-- Top Graphite Horizon Illumination -->
++      <rect width="1920" height="720" fill="url(#topGlow)" />
++    </svg>
+     <iframe id="backgroundImage" src="$i18nRaw{backgroundImageUrl}"></iframe>
+     <ntp-app></ntp-app>
+     <script type="module" src="new_tab_page.js"></script>
 diff --git a/chrome/browser/ui/tabs/tab_menu_model.cc b/chrome/browser/ui/tabs/tab_menu_model.cc
 index 6ddf329734..fc47b1ffcb 100644
 --- a/chrome/browser/ui/tabs/tab_menu_model.cc
