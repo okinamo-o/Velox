@@ -20,6 +20,7 @@ CUMULATIVE_UI_PATCHES = {
     "0019-fix-auto-update-poller-and-button.patch",
     "0020-comet-tabs-and-audio-icon-swap.patch",
     "0021-spaces-workspaces-custom-rename-and-focus-dashboard.patch",
+    "0022-flicker-free-split-screen-and-docking-fix.patch",
 }
 
 def get_repo_root():
