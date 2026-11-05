@@ -2977,7 +2977,7 @@ index 53925e0c97..f58cd482a5 100644
    raw_ptr<TabMenuModelDelegate> tab_menu_model_delegate_;
  };
 diff --git a/chrome/browser/ui/tabs/tab_strip_model.cc b/chrome/browser/ui/tabs/tab_strip_model.cc
-index cf154ae45c..3f6150a312 100644
+index cf154ae45c..38a41e20ce 100644
 --- a/chrome/browser/ui/tabs/tab_strip_model.cc
 +++ b/chrome/browser/ui/tabs/tab_strip_model.cc
 @@ -433,6 +433,13 @@ std::unique_ptr<DetachedTab> TabStripModel::DetachTabImpl(
@@ -3307,18 +3307,7 @@ index cf154ae45c..3f6150a312 100644
    }
  
    if (initial_pinned_state != tab->IsPinned()) {
-@@ -3353,6 +3559,10 @@ void TabStripModel::OnActiveTabChanged(
-   const tabs::TabInterface* old_opener = nullptr;
-   int reason = selection.reason;
- 
-+  if (old_tab && old_tab->GetContents()) {
-+    previous_active_contents_ = old_tab->GetContents()->GetWeakPtr();
-+  }
-+
-   if (old_tab) {
-     const int index = GetIndexOfTab(old_tab);
-     if (index != TabStripModel::kNoTab) {
-@@ -3468,80 +3678,32 @@ std::optional<int> TabStripModel::DetermineNewSelectedIndex(
+@@ -3468,80 +3674,32 @@ std::optional<int> TabStripModel::DetermineNewSelectedIndex(
      int removing_index) const {
    DCHECK(ContainsIndex(removing_index));
  
@@ -3414,22 +3403,10 @@ index cf154ae45c..3f6150a312 100644
  
  TabStripModel::ScopedTabStripModalUIImpl::ScopedTabStripModalUIImpl(
 diff --git a/chrome/browser/ui/tabs/tab_strip_model.h b/chrome/browser/ui/tabs/tab_strip_model.h
-index f8c716fc0c..990b5f6abd 100644
+index f8c716fc0c..4e8e1c8cec 100644
 --- a/chrome/browser/ui/tabs/tab_strip_model.h
 +++ b/chrome/browser/ui/tabs/tab_strip_model.h
-@@ -339,6 +339,11 @@ class TabStripModel : public TabGroupController {
-   // Returns the currently active Tab, or NULL if there is none.
-   tabs::TabInterface* GetActiveTab() const;
- 
-+  // VELOX: Returns the WebContents that was active immediately before the current active tab, or NULL.
-+  content::WebContents* previous_active_contents() const {
-+    return previous_active_contents_.get();
-+  }
-+
-   // Returns the WebContents at the specified index, or NULL if there is
-   // none.
-   content::WebContents* GetWebContentsAt(int index) const;
-@@ -513,6 +518,20 @@ class TabStripModel : public TabGroupController {
+@@ -513,6 +513,20 @@ class TabStripModel : public TabGroupController {
    // ascending order.
    void AddToNewSplit(const std::vector<int> indices);
  
@@ -3450,7 +3427,7 @@ index f8c716fc0c..990b5f6abd 100644
    // Create a new tab group and add the set of tabs pointed to be |indices| to
    // it. Pins all of the tabs if any of them were pinned, and reorders the tabs
    // so they are contiguous and do not split an existing group in half. Returns
-@@ -595,6 +614,7 @@ class TabStripModel : public TabGroupController {
+@@ -595,6 +609,7 @@ class TabStripModel : public TabGroupController {
      CommandAddToNewComparisonTable,
      CommandAddToExistingComparisonTable,
      CommandAddToSplit,
@@ -3458,7 +3435,7 @@ index f8c716fc0c..990b5f6abd 100644
      CommandRemoveFromGroup,
      CommandMoveToExistingWindow,
      CommandMoveTabsToNewWindow,
-@@ -603,6 +623,7 @@ class TabStripModel : public TabGroupController {
+@@ -603,6 +618,7 @@ class TabStripModel : public TabGroupController {
      CommandGoBack,
      CommandCloseAllTabs,
      CommandCommerceProductSpecifications,
@@ -3466,7 +3443,7 @@ index f8c716fc0c..990b5f6abd 100644
      CommandLast
    };
  
-@@ -1040,6 +1061,21 @@ class TabStripModel : public TabGroupController {
+@@ -1040,6 +1056,18 @@ class TabStripModel : public TabGroupController {
    // Tracks whether a modal UI is showing.
    bool showing_modal_ui_ = false;
  
@@ -3478,9 +3455,6 @@ index f8c716fc0c..990b5f6abd 100644
 +  // Monotonic id source for split pairs (see TabModel::split_id()).
 +  int next_split_id_ = 1;
 +
-+  // VELOX: Track the previously active WebContents so split operations know the prior context.
-+  base::WeakPtr<content::WebContents> previous_active_contents_;
-+
 +  // Clears split state on tabs that no longer sit next to their partner.
 +  // Notifies observers if anything changed.
 +  void CleanUpOrphanedSplits();
@@ -3489,7 +3463,7 @@ index f8c716fc0c..990b5f6abd 100644
  };
  
 diff --git a/chrome/browser/ui/views/frame/browser_view.cc b/chrome/browser/ui/views/frame/browser_view.cc
-index 76c889780c..fbe858dab4 100644
+index 76c889780c..5b056542b1 100644
 --- a/chrome/browser/ui/views/frame/browser_view.cc
 +++ b/chrome/browser/ui/views/frame/browser_view.cc
 @@ -127,6 +127,7 @@
@@ -3587,7 +3561,7 @@ index 76c889780c..fbe858dab4 100644
  }
  
  bool BrowserView::GetTabStripVisible() const {
-@@ -1450,35 +1477,95 @@ views::Widget* BrowserView::GetWidgetForAnchoring() {
+@@ -1450,35 +1477,78 @@ views::Widget* BrowserView::GetWidgetForAnchoring() {
  }
  
  const tabs::TabInterface* BrowserView::GetInactiveSplitTab() {
@@ -3683,27 +3657,10 @@ index 76c889780c..fbe858dab4 100644
 +  if (multi_contents_view_) {
 +    multi_contents_view_->UpdateSplitLayout();
 +  }
-+}
-+
-+void BrowserView::ShowSplitDropPreview(bool is_left) {
-+  if (multi_contents_view_) {
-+    multi_contents_view_->ShowSplitDropPreview(is_left);
-+  }
-+}
-+
-+void BrowserView::HideSplitDropPreview() {
-+  if (multi_contents_view_) {
-+    multi_contents_view_->HideSplitDropPreview();
-+  }
-+}
-+
-+bool BrowserView::IsSplitDropPreviewVisible() const {
-+  return multi_contents_view_ &&
-+         multi_contents_view_->IsSplitDropPreviewVisible();
  }
  
  ///////////////////////////////////////////////////////////////////////////////
-@@ -1851,11 +1938,16 @@ void BrowserView::OnActiveTabChanged(content::WebContents* old_contents,
+@@ -1851,11 +1921,16 @@ void BrowserView::OnActiveTabChanged(content::WebContents* old_contents,
                                       int reason) {
    DCHECK(new_contents);
    TRACE_EVENT0("ui", "BrowserView::OnActiveTabChanged");
@@ -3725,7 +3682,7 @@ index 76c889780c..fbe858dab4 100644
    }
  
    if (old_contents && !old_contents->IsBeingDestroyed()) {
-@@ -1906,6 +1998,9 @@ void BrowserView::OnActiveTabChanged(content::WebContents* old_contents,
+@@ -1906,6 +1981,9 @@ void BrowserView::OnActiveTabChanged(content::WebContents* old_contents,
      if (loading_bar_) {
        loading_bar_->SetWebContents(nullptr);
      }
@@ -3735,7 +3692,7 @@ index 76c889780c..fbe858dab4 100644
      contents_web_view_->SetWebContents(nullptr);
      devtools_web_view_->SetWebContents(nullptr);
    }
-@@ -1992,7 +2087,7 @@ void BrowserView::OnActiveTabChanged(content::WebContents* old_contents,
+@@ -1992,7 +2070,7 @@ void BrowserView::OnActiveTabChanged(content::WebContents* old_contents,
    if (multi_contents_view_) {
      const tabs::TabInterface* active_tab =
          tabs::TabInterface::GetFromContents(new_contents);
@@ -3744,7 +3701,7 @@ index 76c889780c..fbe858dab4 100644
        ShowSplitView();
      } else {
        HideSplitView();
-@@ -2003,6 +2098,16 @@ void BrowserView::OnActiveTabChanged(content::WebContents* old_contents,
+@@ -2003,6 +2081,16 @@ void BrowserView::OnActiveTabChanged(content::WebContents* old_contents,
  void BrowserView::OnTabDetached(content::WebContents* contents,
                                  bool was_active) {
    DCHECK(contents);
@@ -3761,7 +3718,7 @@ index 76c889780c..fbe858dab4 100644
    if (!was_active) {
      return;
    }
-@@ -3558,6 +3663,7 @@ content::KeyboardEventProcessingResult BrowserView::PreHandleKeyboardEvent(
+@@ -3558,6 +3646,7 @@ content::KeyboardEventProcessingResult BrowserView::PreHandleKeyboardEvent(
  
    int id;
    if (!FindCommandIdForAccelerator(accelerator, &id)) {
@@ -3769,7 +3726,7 @@ index 76c889780c..fbe858dab4 100644
      // |accelerator| is not a browser command, it may be handled by ash (e.g.
      // F4-F10). Report if we handled it.
      if (focus_manager->ProcessAccelerator(accelerator)) {
-@@ -3710,6 +3816,14 @@ LocationBarView* BrowserView::GetLocationBarView() const {
+@@ -3710,6 +3799,14 @@ LocationBarView* BrowserView::GetLocationBarView() const {
  void BrowserView::TabChangedAt(content::WebContents* contents,
                                 int index,
                                 TabChangeType change_type) {
@@ -3784,30 +3741,27 @@ index 76c889780c..fbe858dab4 100644
    if (change_type != TabChangeType::kLoadingOnly || contents->IsLoading()) {
      return;
    }
-@@ -3724,11 +3838,21 @@ void BrowserView::TabChangedAt(content::WebContents* contents,
+@@ -3724,8 +3821,18 @@ void BrowserView::TabChangedAt(content::WebContents* contents,
  void BrowserView::OnSplitViewAdded(std::vector<tabs::TabInterface*> tabs) {
    const tabs::TabInterface* active_tab =
        browser_->tab_strip_model()->GetActiveTab();
 -  if (active_tab->IsSplit()) {
 +  if (active_tab && active_tab->IsSplit()) {
-     ShowSplitView();
-   }
- }
- 
++    ShowSplitView();
++  }
++}
++
 +void BrowserView::OnSplitViewRemoved() {
 +  const tabs::TabInterface* active_tab =
 +      browser_->tab_strip_model()->GetActiveTab();
 +  if (active_tab && active_tab->IsSplit() && GetInactiveSplitTab()) {
-+    ShowSplitView();
+     ShowSplitView();
 +  } else {
 +    HideSplitView();
-+  }
-+}
-+
- void BrowserView::OnTabStripModelChanged(
-     TabStripModel* tab_strip_model,
-     const TabStripModelChange& change,
-@@ -3748,6 +3872,10 @@ void BrowserView::OnTabStripModelChanged(
+   }
+ }
+ 
+@@ -3748,6 +3855,10 @@ void BrowserView::OnTabStripModelChanged(
      return;
    }
  
@@ -3818,7 +3772,7 @@ index 76c889780c..fbe858dab4 100644
    for ([[maybe_unused]] const auto& contents : change.GetInsert()->contents) {
  #if defined(USE_AURA)
      // WebContents inserted in tabs might not have been added to the root
-@@ -4184,7 +4312,16 @@ bool BrowserView::ShouldShowWindowIcon() const {
+@@ -4184,7 +4295,16 @@ bool BrowserView::ShouldShowWindowIcon() const {
  
  ui::ImageModel BrowserView::GetWindowAppIcon() {
    web_app::AppBrowserController* app_controller = browser()->app_controller();
@@ -3836,7 +3790,7 @@ index 76c889780c..fbe858dab4 100644
  }
  
  ui::ImageModel BrowserView::GetWindowIcon() {
-@@ -4212,6 +4349,12 @@ ui::ImageModel BrowserView::GetWindowIcon() {
+@@ -4212,6 +4332,12 @@ ui::ImageModel BrowserView::GetWindowIcon() {
          rb.GetImageNamed(override_window_icon_resource_id));
    }
  #endif
@@ -3849,7 +3803,7 @@ index 76c889780c..fbe858dab4 100644
  
    if (!browser_->is_type_normal()) {
      return ui::ImageModel::FromImage(browser_->GetCurrentPageIcon());
-@@ -4404,6 +4547,9 @@ views::View* BrowserView::CreateMacOverlayView() {
+@@ -4404,6 +4530,9 @@ views::View* BrowserView::CreateMacOverlayView() {
  void BrowserView::OnWidgetDestroying(views::Widget* widget) {
    DCHECK(widget_observation_.IsObservingSource(widget));
    widget_observation_.Reset();
@@ -3859,7 +3813,7 @@ index 76c889780c..fbe858dab4 100644
    // Destroy any remaining WebContents early on. Doing so may result in
    // calling back to one of the Views/LayoutManagers or supporting classes of
    // BrowserView. By destroying here we ensure all said classes are valid.
-@@ -4852,6 +4998,12 @@ void BrowserView::AddedToWidget() {
+@@ -4852,6 +4981,12 @@ void BrowserView::AddedToWidget() {
        right_aligned_side_panel_separator_, side_panel_rounded_corner_,
        immersive_mode_controller_.get(), contents_separator_));
  
@@ -3872,7 +3826,7 @@ index 76c889780c..fbe858dab4 100644
    EnsureFocusOrder();
  
    // This browser view may already have a custom button provider set (e.g the
-@@ -5161,22 +5313,25 @@ void BrowserView::UpdateDevToolsForContents(WebContents* web_contents,
+@@ -5161,22 +5296,25 @@ void BrowserView::UpdateDevToolsForContents(WebContents* web_contents,
    }
    contents_container_->DeprecatedLayoutImmediately();
  
@@ -3903,7 +3857,7 @@ index 76c889780c..fbe858dab4 100644
  
    // When browser window is resizing, the contents_container and web_contents
    // bounds can be out of sync, resulting in a state, where it is impossible to
-@@ -5368,6 +5523,7 @@ void BrowserView::LoadAccelerators() {
+@@ -5368,6 +5506,7 @@ void BrowserView::LoadAccelerators() {
      focus_manager->RegisterAccelerator(
          accelerator, ui::AcceleratorManager::kNormalPriority, this);
    }
@@ -3911,7 +3865,7 @@ index 76c889780c..fbe858dab4 100644
  }
  
  int BrowserView::GetCommandIDForAppCommandID(int app_command_id) const {
-@@ -5618,33 +5774,15 @@ user_education::FeaturePromoResult BrowserView::CanShowFeaturePromo(
+@@ -5618,33 +5757,15 @@ user_education::FeaturePromoResult BrowserView::CanShowFeaturePromo(
  
  void BrowserView::MaybeShowFeaturePromo(
      user_education::FeaturePromoParams params) {
@@ -3951,7 +3905,7 @@ index 76c889780c..fbe858dab4 100644
  
  bool BrowserView::AbortFeaturePromo(const base::Feature& iph_feature) {
 diff --git a/chrome/browser/ui/views/frame/browser_view.h b/chrome/browser/ui/views/frame/browser_view.h
-index b9986c6e90..1cf83562af 100644
+index b9986c6e90..994148de6a 100644
 --- a/chrome/browser/ui/views/frame/browser_view.h
 +++ b/chrome/browser/ui/views/frame/browser_view.h
 @@ -90,6 +90,7 @@ class TopContainerLoadingBar;
@@ -3984,7 +3938,7 @@ index b9986c6e90..1cf83562af 100644
  
    SidePanel* unified_side_panel() { return unified_side_panel_; }
  
-@@ -485,6 +494,17 @@ class BrowserView : public BrowserWindow,
+@@ -485,6 +494,12 @@ class BrowserView : public BrowserWindow,
    // side-by-side display.
    void HideSplitView();
  
@@ -3994,15 +3948,10 @@ index b9986c6e90..1cf83562af 100644
 +  // Updates the margins and visual layout of the split panes.
 +  void UpdateSplitViewLayout();
 +
-+  // VELOX: Drag-to-Split-Screen drop preview methods.
-+  void ShowSplitDropPreview(bool is_left);
-+  void HideSplitDropPreview();
-+  bool IsSplitDropPreviewVisible() const;
-+
    // BrowserWindow:
    void Show() override;
    void ShowInactive() override;
-@@ -707,6 +727,7 @@ class BrowserView : public BrowserWindow,
+@@ -707,6 +722,7 @@ class BrowserView : public BrowserWindow,
                      int index,
                      TabChangeType change_type) override;
    void OnSplitViewAdded(std::vector<tabs::TabInterface*> tabs) override;
@@ -4010,7 +3959,7 @@ index b9986c6e90..1cf83562af 100644
    void TabStripEmpty() override;
    void WillCloseAllTabs(TabStripModel* tab_strip_model) override;
    void CloseAllTabsStopped(TabStripModel* tab_strip_model,
-@@ -1205,6 +1226,9 @@ class BrowserView : public BrowserWindow,
+@@ -1205,6 +1221,9 @@ class BrowserView : public BrowserWindow,
    // owned by `overlay_widget_`.
    raw_ptr<views::View, DanglingUntriaged> overlay_view_ = nullptr;
  
@@ -4021,10 +3970,10 @@ index b9986c6e90..1cf83562af 100644
    // Used when calling CreateMacOverlayView(). This widget owns `overlay_view_`.
    // Its content NSView will be reparented to a NSToolbarFullScreenWindow
 diff --git a/chrome/browser/ui/views/frame/multi_contents_view.cc b/chrome/browser/ui/views/frame/multi_contents_view.cc
-index 08af58007b..93e357fb2e 100644
+index 08af58007b..9bab4b7a3d 100644
 --- a/chrome/browser/ui/views/frame/multi_contents_view.cc
 +++ b/chrome/browser/ui/views/frame/multi_contents_view.cc
-@@ -4,23 +4,424 @@
+@@ -4,23 +4,278 @@
  
  #include "chrome/browser/ui/views/frame/multi_contents_view.h"
  
@@ -4216,152 +4165,6 @@ index 08af58007b..93e357fb2e 100644
 +
 +BEGIN_METADATA(SplitPaneCard)
 +END_METADATA
-+
-+class VeloxSplitDropOverlayView : public views::View {
-+  METADATA_HEADER(VeloxSplitDropOverlayView, views::View)
-+ public:
-+  explicit VeloxSplitDropOverlayView(bool is_left) : is_left_(is_left) {}
-+
-+  void SetIsLeft(bool is_left) {
-+    if (is_left_ != is_left) {
-+      is_left_ = is_left;
-+      SchedulePaint();
-+    }
-+  }
-+
-+  void OnPaint(gfx::Canvas* canvas) override {
-+    gfx::ScopedCanvas scoped_canvas(canvas);
-+    const float scale = canvas->UndoDeviceScaleFactor();
-+    SkRect rect =
-+        gfx::RectToSkRect(gfx::ScaleToEnclosingRect(GetLocalBounds(), scale));
-+    rect.inset(2.0f * scale, 2.0f * scale);
-+    if (rect.isEmpty()) {
-+      return;
-+    }
-+
-+    const float radius = 12.0f * scale;
-+    SkRRect rrect;
-+    rrect.setRectXY(rect, radius, radius);
-+
-+    // 1. Frosted Deep Obsidian Card Background
-+    cc::PaintFlags bg_flags;
-+    bg_flags.setAntiAlias(true);
-+    bg_flags.setStyle(cc::PaintFlags::kFill_Style);
-+    bg_flags.setColor(SkColorSetARGB(220, 10, 15, 24));
-+    canvas->sk_canvas()->drawRRect(rrect, bg_flags);
-+
-+    // 2. Soft Sapphire Depth Halo
-+    cc::PaintFlags halo_flags;
-+    halo_flags.setAntiAlias(true);
-+    halo_flags.setStyle(cc::PaintFlags::kStroke_Style);
-+    halo_flags.setStrokeWidth(4.0f * scale);
-+    halo_flags.setColor(SkColorSetARGB(45, 59, 130, 246));
-+    canvas->sk_canvas()->drawRRect(rrect, halo_flags);
-+
-+    // 3. Crisp Electric Sapphire Border
-+    cc::PaintFlags border_flags;
-+    border_flags.setAntiAlias(true);
-+    border_flags.setStyle(cc::PaintFlags::kStroke_Style);
-+    border_flags.setStrokeWidth(1.6f * scale);
-+    border_flags.setColor(SkColorSetARGB(230, 59, 130, 246));
-+    canvas->sk_canvas()->drawRRect(rrect, border_flags);
-+
-+    // 4. Center Graphic: Split Screen Icon (Two side-by-side rounded panes)
-+    const float cx = rect.centerX();
-+    const float cy = rect.centerY() - 20.0f * scale;
-+    const float pane_w = 36.0f * scale;
-+    const float pane_h = 48.0f * scale;
-+    const float pane_gap = 8.0f * scale;
-+    const float pane_radius = 5.0f * scale;
-+
-+    SkRect left_pane = SkRect::MakeXYWH(cx - pane_w - pane_gap / 2.0f,
-+                                        cy - pane_h / 2.0f, pane_w, pane_h);
-+    SkRect right_pane = SkRect::MakeXYWH(cx + pane_gap / 2.0f,
-+                                         cy - pane_h / 2.0f, pane_w, pane_h);
-+
-+    SkRRect left_rrect, right_rrect;
-+    left_rrect.setRectXY(left_pane, pane_radius, pane_radius);
-+    right_rrect.setRectXY(right_pane, pane_radius, pane_radius);
-+
-+    // Active pane: Electric Sapphire fill + rim
-+    cc::PaintFlags active_pane_fill;
-+    active_pane_fill.setAntiAlias(true);
-+    active_pane_fill.setStyle(cc::PaintFlags::kFill_Style);
-+    active_pane_fill.setColor(SkColorSetARGB(185, 59, 130, 246));
-+
-+    cc::PaintFlags active_pane_border;
-+    active_pane_border.setAntiAlias(true);
-+    active_pane_border.setStyle(cc::PaintFlags::kStroke_Style);
-+    active_pane_border.setStrokeWidth(1.5f * scale);
-+    active_pane_border.setColor(SkColorSetRGB(147, 197, 253));
-+
-+    // Inactive pane: Translucent frosted slate
-+    cc::PaintFlags inactive_pane_fill;
-+    inactive_pane_fill.setAntiAlias(true);
-+    inactive_pane_fill.setStyle(cc::PaintFlags::kFill_Style);
-+    inactive_pane_fill.setColor(SkColorSetARGB(25, 255, 255, 255));
-+
-+    cc::PaintFlags inactive_pane_border;
-+    inactive_pane_border.setAntiAlias(true);
-+    inactive_pane_border.setStyle(cc::PaintFlags::kStroke_Style);
-+    inactive_pane_border.setStrokeWidth(1.0f * scale);
-+    inactive_pane_border.setColor(SkColorSetARGB(65, 255, 255, 255));
-+
-+    if (is_left_) {
-+      canvas->sk_canvas()->drawRRect(left_rrect, active_pane_fill);
-+      canvas->sk_canvas()->drawRRect(left_rrect, active_pane_border);
-+      canvas->sk_canvas()->drawRRect(right_rrect, inactive_pane_fill);
-+      canvas->sk_canvas()->drawRRect(right_rrect, inactive_pane_border);
-+    } else {
-+      canvas->sk_canvas()->drawRRect(left_rrect, inactive_pane_fill);
-+      canvas->sk_canvas()->drawRRect(left_rrect, inactive_pane_border);
-+      canvas->sk_canvas()->drawRRect(right_rrect, active_pane_fill);
-+      canvas->sk_canvas()->drawRRect(right_rrect, active_pane_border);
-+    }
-+
-+    // Plus (+) / Dock Arrow badge on target pane
-+    const float badge_cx =
-+        is_left_ ? left_pane.centerX() : right_pane.centerX();
-+    const float badge_cy =
-+        is_left_ ? left_pane.centerY() : right_pane.centerY();
-+    cc::PaintFlags badge_flags;
-+    badge_flags.setAntiAlias(true);
-+    badge_flags.setColor(SK_ColorWHITE);
-+    badge_flags.setStrokeWidth(2.2f * scale);
-+    badge_flags.setStrokeCap(cc::PaintFlags::kRound_Cap);
-+    canvas->sk_canvas()->drawLine(badge_cx - 6.0f * scale, badge_cy,
-+                                  badge_cx + 6.0f * scale, badge_cy,
-+                                  badge_flags);
-+    canvas->sk_canvas()->drawLine(badge_cx, badge_cy - 6.0f * scale, badge_cx,
-+                                  badge_cy + 6.0f * scale, badge_flags);
-+
-+    // 5. Typography: Primary Title and Subtitle
-+    gfx::Rect title_rect(
-+        0, static_cast<int>((cy + pane_h / 2.0f + 14.0f * scale) / scale),
-+        GetLocalBounds().width(), 26);
-+    canvas->DrawStringRectWithFlags(
-+        u"Dock to Split Screen",
-+        gfx::FontList().Derive(3, gfx::Font::NORMAL, gfx::Font::Weight::BOLD),
-+        SK_ColorWHITE, title_rect,
-+        gfx::Canvas::TEXT_ALIGN_CENTER | gfx::Canvas::NO_SUBPIXEL_RENDERING);
-+
-+    gfx::Rect subtitle_rect(0, title_rect.bottom() + 2,
-+                            GetLocalBounds().width(), 20);
-+    canvas->DrawStringRectWithFlags(
-+        is_left_ ? u"Release tab to split on Left"
-+                 : u"Release tab to split on Right",
-+        gfx::FontList().Derive(0, gfx::Font::NORMAL,
-+                               gfx::Font::Weight::NORMAL),
-+        SkColorSetRGB(148, 163, 184), subtitle_rect,
-+        gfx::Canvas::TEXT_ALIGN_CENTER | gfx::Canvas::NO_SUBPIXEL_RENDERING);
-+  }
-+
-+ private:
-+  bool is_left_ = false;
-+};
-+
-+BEGIN_METADATA(VeloxSplitDropOverlayView)
-+END_METADATA
  
  DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(MultiContentsView,
                                        kMultiContentsViewElementId);
@@ -4456,76 +4259,10 @@ index 08af58007b..93e357fb2e 100644
  
    SetProperty(views::kElementIdentifierKey, kMultiContentsViewElementId);
    SetLayoutManager(std::make_unique<views::FlexLayout>())
-@@ -31,14 +432,280 @@ MultiContentsView::MultiContentsView(content::BrowserContext* browser_context) {
-                                    views::MaximumFlexSizeRule::kUnbounded));
- }
+@@ -33,12 +288,215 @@ MultiContentsView::MultiContentsView(content::BrowserContext* browser_context) {
  
--MultiContentsView::~MultiContentsView() = default;
-+MultiContentsView::~MultiContentsView() {
-+  if (drop_preview_widget_) {
-+    drop_preview_widget_->CloseNow();
-+    drop_preview_widget_.reset();
-+  }
-+}
-+
-+void MultiContentsView::ShowSplitDropPreview(bool is_left) {
-+  if (!browser_view_ || !browser_view_->GetWidget()) {
-+    return;
-+  }
-+  drop_preview_is_left_ = is_left;
-+
-+  gfx::Rect contents_bounds = GetBoundsInScreen();
-+  if (contents_bounds.IsEmpty()) {
-+    return;
-+  }
-+
-+  const int half_w = contents_bounds.width() / 2;
-+  const int pad = 8;
-+  gfx::Rect target_rect = is_left
-+      ? gfx::Rect(contents_bounds.x() + pad,
-+                  contents_bounds.y() + pad,
-+                  half_w - pad - 4,
-+                  contents_bounds.height() - pad * 2)
-+      : gfx::Rect(contents_bounds.x() + half_w + 4,
-+                  contents_bounds.y() + pad,
-+                  half_w - pad - 4,
-+                  contents_bounds.height() - pad * 2);
-+
-+  if (!drop_preview_widget_) {
-+    drop_preview_widget_ = std::make_unique<views::Widget>();
-+    views::Widget::InitParams params(
-+        views::Widget::InitParams::NATIVE_WIDGET_OWNS_WIDGET,
-+        views::Widget::InitParams::TYPE_POPUP);
-+    params.opacity = views::Widget::InitParams::WindowOpacity::kTranslucent;
-+    params.parent = browser_view_->GetWidget()->GetNativeView();
-+    params.accept_events = false;
-+    drop_preview_widget_->Init(std::move(params));
-+    drop_preview_widget_->SetContentsView(
-+        std::make_unique<VeloxSplitDropOverlayView>(is_left));
-+  } else {
-+    auto* view = static_cast<VeloxSplitDropOverlayView*>(
-+        drop_preview_widget_->GetContentsView());
-+    if (view) {
-+      view->SetIsLeft(is_left);
-+    }
-+  }
-+
-+  drop_preview_widget_->SetBounds(target_rect);
-+  if (!drop_preview_widget_->IsVisible()) {
-+    drop_preview_widget_->Show();
-+  }
-+}
-+
-+void MultiContentsView::HideSplitDropPreview() {
-+  if (drop_preview_widget_) {
-+    drop_preview_widget_->Hide();
-+  }
-+}
-+
-+bool MultiContentsView::IsSplitDropPreviewVisible() const {
-+  return drop_preview_widget_ && drop_preview_widget_->IsVisible();
-+}
-+
+ MultiContentsView::~MultiContentsView() = default;
+ 
 +void MultiContentsView::SetBrowserView(BrowserView* browser_view) {
 +  browser_view_ = browser_view;
 +}
@@ -4633,7 +4370,7 @@ index 08af58007b..93e357fb2e 100644
 +  }
 +  UpdateSplitLayout();
 +}
- 
++
  void MultiContentsView::SetWebContents(content::WebContents* web_contents,
                                         bool active) {
 -  ContentsWebView* contents_view =
@@ -4743,7 +4480,7 @@ index 08af58007b..93e357fb2e 100644
  
  BEGIN_METADATA(MultiContentsView)
 diff --git a/chrome/browser/ui/views/frame/multi_contents_view.h b/chrome/browser/ui/views/frame/multi_contents_view.h
-index 8bcdccc607..c45301f0b2 100644
+index 8bcdccc607..be737b4bd9 100644
 --- a/chrome/browser/ui/views/frame/multi_contents_view.h
 +++ b/chrome/browser/ui/views/frame/multi_contents_view.h
 @@ -5,11 +5,15 @@
@@ -4762,7 +4499,7 @@ index 8bcdccc607..c45301f0b2 100644
  
  namespace content {
  class BrowserContext;
-@@ -29,17 +33,60 @@ class MultiContentsView : public views::View {
+@@ -29,17 +33,52 @@ class MultiContentsView : public views::View {
    MultiContentsView& operator=(const MultiContentsView&) = delete;
    ~MultiContentsView() override;
  
@@ -4799,11 +4536,6 @@ index 8bcdccc607..c45301f0b2 100644
 +
 +  void UpdateSplitLayout();
 +
-+  // VELOX: Drag-to-Split-Screen drop zone preview methods.
-+  void ShowSplitDropPreview(bool is_left);
-+  void HideSplitDropPreview();
-+  bool IsSplitDropPreviewVisible() const;
-+
 +  // views::View:
 +  void OnPaint(gfx::Canvas* canvas) override;
  
@@ -4822,9 +4554,6 @@ index 8bcdccc607..c45301f0b2 100644
 +  raw_ptr<ContentsWebView> right_contents_view_ = nullptr;
 +
 +  bool activating_inactive_ = false;
-+
-+  std::unique_ptr<views::Widget> drop_preview_widget_;
-+  bool drop_preview_is_left_ = false;
 +
 +  base::WeakPtrFactory<MultiContentsView> weak_ptr_factory_{this};
  };
@@ -5211,267 +4940,6 @@ index a81ff31023..7dc3a25b0f 100644
    bool dark_mode = false;
    if (location_icon_view_ && location_icon_view_->GetBackground()) {
      dark_mode =
-diff --git a/chrome/browser/ui/views/tabs/dragging/tab_drag_controller.cc b/chrome/browser/ui/views/tabs/dragging/tab_drag_controller.cc
-index babed73919..f185abc9b8 100644
---- a/chrome/browser/ui/views/tabs/dragging/tab_drag_controller.cc
-+++ b/chrome/browser/ui/views/tabs/dragging/tab_drag_controller.cc
-@@ -511,6 +511,13 @@ TabDragController::Liveness TabDragController::Init(
-         source_view->width();
-   }
-   ref->initial_selection_model_ = std::move(initial_selection_model);
-+  if (ref->initial_selection_model_.active().has_value()) {
-+    ref->initial_active_index_ =
-+        static_cast<int>(ref->initial_selection_model_.active().value());
-+  } else if (ref->source_context_ && ref->source_context_->GetTabStripModel()) {
-+    ref->initial_active_index_ =
-+        ref->source_context_->GetTabStripModel()->active_index();
-+  }
- 
-   ref->window_finder_ = std::make_unique<WindowFinder>();
- 
-@@ -1261,6 +1268,49 @@ void TabDragController::MoveAttached(const gfx::Point& point_in_screen,
- 
-   gfx::Point dragged_view_point = GetAttachedDragPoint(point_in_screen);
- 
-+  // VELOX: Check if currently hovering over the webpage area to show split dock preview.
-+  BrowserView* current_bv =
-+      attached_context_ && attached_context_->GetWidget()
-+          ? BrowserView::GetBrowserViewForNativeWindow(
-+                attached_context_->GetWidget()->GetNativeWindow())
-+          : nullptr;
-+
-+  bool in_split_zone = false;
-+  if (current_bv && current_bv->contents_container() && current_bv->browser() &&
-+      current_bv->browser()->tab_strip_model() &&
-+      current_bv->browser()->tab_strip_model()->count() >= 2 &&
-+      num_dragging_tabs() == 1) {
-+    gfx::Rect contents_bounds =
-+        current_bv->contents_container()->GetBoundsInScreen();
-+    const int dy = point_in_screen.y() - start_point_in_screen_.y();
-+    // Only enter split dock zone if user deliberately drags the tab downwards into
-+    // the webpage area (at least 70px down from pickup, and at least 60px below toolbar).
-+    // This ensures normal horizontal tab reordering is completely unaffected!
-+    if (contents_bounds.Contains(point_in_screen) && dy >= 70 &&
-+        point_in_screen.y() >= contents_bounds.y() + 60) {
-+      in_split_zone = true;
-+      const bool is_left =
-+          point_in_screen.x() <
-+          (contents_bounds.x() + contents_bounds.width() / 2);
-+      current_bv->ShowSplitDropPreview(is_left);
-+      split_drop_active_ = true;
-+      split_drop_is_left_ = is_left;
-+      split_drop_browser_view_ = current_bv;
-+    }
-+  }
-+
-+  if (!in_split_zone && split_drop_active_) {
-+    if (split_drop_browser_view_) {
-+      split_drop_browser_view_->HideSplitDropPreview();
-+    }
-+    split_drop_active_ = false;
-+    split_drop_browser_view_ = nullptr;
-+  }
-+
-+  if (in_split_zone) {
-+    return;
-+  }
-+
-   const int threshold = attached_context_->GetHorizontalDragThreshold();
- 
-   std::vector<raw_ptr<TabSlotView, VectorExperimental>> views(
-@@ -1396,15 +1446,47 @@ TabDragController::Liveness TabDragController::GetTargetTabStripForPoint(
-   }
- 
-   if (local_window && CanAttachTo(local_window)) {
-+    BrowserView* browser_view =
-+        BrowserView::GetBrowserViewForNativeWindow(local_window);
-     TabDragContext* destination_tab_strip =
--        BrowserView::GetBrowserViewForNativeWindow(local_window)
--            ->tabstrip()
--            ->GetDragContext();
-+        browser_view ? browser_view->tabstrip()->GetDragContext() : nullptr;
-     if (destination_tab_strip &&
-         DoesTabStripContain(destination_tab_strip, point_in_screen)) {
-       *context = destination_tab_strip;
-       return Liveness::ALIVE;
-     }
-+
-+    // VELOX: If the cursor is within the top region (tabstrip + toolbar + generous margin),
-+    // stay attached to the tabstrip so normal horizontal reordering never detaches unexpectedly.
-+    if (browser_view && browser_view->contents_container()) {
-+      gfx::Rect contents_bounds =
-+          browser_view->contents_container()->GetBoundsInScreen();
-+      gfx::Rect window_bounds = browser_view->GetBoundsInScreen();
-+
-+      if (point_in_screen.y() < contents_bounds.y() + 60 &&
-+          point_in_screen.x() >= window_bounds.x() &&
-+          point_in_screen.x() <= window_bounds.right()) {
-+        *context = destination_tab_strip ? destination_tab_strip
-+                                         : source_context_.get();
-+        return Liveness::ALIVE;
-+      }
-+
-+      // VELOX: Drag-to-Split-Screen gesture.
-+      // If dragging a single tab deeply over the webpage content area of a window with 2+ tabs,
-+      // keep attached so split docking preview can be shown.
-+      if (browser_view->browser() &&
-+          browser_view->browser()->tab_strip_model() &&
-+          browser_view->browser()->tab_strip_model()->count() >= 2 &&
-+          num_dragging_tabs() == 1) {
-+        const int dy = point_in_screen.y() - start_point_in_screen_.y();
-+        if (contents_bounds.Contains(point_in_screen) && dy >= 70 &&
-+            point_in_screen.y() >= contents_bounds.y() + 60) {
-+          *context = destination_tab_strip ? destination_tab_strip
-+                                           : source_context_.get();
-+          return Liveness::ALIVE;
-+        }
-+      }
-+    }
-   }
- 
-   *context = current_state_ == DragState::kDraggingWindow
-@@ -1848,6 +1930,14 @@ void TabDragController::EndDragImpl(EndDragType type) {
-   VLOG(1) << __func__ << " type=" << type
-           << " state=" << static_cast<int>(current_state_);
- 
-+  if (type != NORMAL && split_drop_active_) {
-+    if (split_drop_browser_view_) {
-+      split_drop_browser_view_->HideSplitDropPreview();
-+    }
-+    split_drop_active_ = false;
-+    split_drop_browser_view_ = nullptr;
-+  }
-+
-   DragState previous_state = current_state_;
-   current_state_ = DragState::kStopped;
-   attached_context_tabs_closed_tracker_.reset();
-@@ -2130,6 +2220,101 @@ void TabDragController::CompleteDrag() {
-   CHECK_NE(current_state_, DragState::kNotStarted);
-   CHECK(attached_context_);
- 
-+  // VELOX: Handle Drag-to-Split-Screen drop commit!
-+  if (split_drop_active_ && split_drop_browser_view_) {
-+    BrowserView* target_bv = split_drop_browser_view_;
-+    const bool is_left = split_drop_is_left_;
-+    target_bv->HideSplitDropPreview();
-+    split_drop_active_ = false;
-+    split_drop_browser_view_ = nullptr;
-+
-+    TabStripModel* model = target_bv->browser()->tab_strip_model();
-+    if (model && model->count() >= 2 && !drag_data_.empty()) {
-+      content::WebContents* dragged_contents = drag_data_[0].contents;
-+      int dragged_idx = model->GetIndexOfWebContents(dragged_contents);
-+
-+      if (dragged_idx != TabStripModel::kNoTab && !model->IsTabPinned(dragged_idx)) {
-+        int partner_idx = TabStripModel::kNoTab;
-+
-+        // 1. Priority: the tab active before this drag started
-+        if (initial_active_index_ != TabStripModel::kNoTab &&
-+            initial_active_index_ != dragged_idx &&
-+            initial_active_index_ < model->count() &&
-+            !model->IsTabPinned(initial_active_index_)) {
-+          partner_idx = initial_active_index_;
-+        }
-+
-+        // 2. Priority: model's previous_active_contents()
-+        if (partner_idx == TabStripModel::kNoTab && model->previous_active_contents()) {
-+          int prev_idx = model->GetIndexOfWebContents(model->previous_active_contents());
-+          if (prev_idx != TabStripModel::kNoTab &&
-+              prev_idx != dragged_idx &&
-+              !model->IsTabPinned(prev_idx)) {
-+            partner_idx = prev_idx;
-+          }
-+        }
-+
-+        // 3. Priority: adjacent unpinned tab (prefer right, then left)
-+        if (partner_idx == TabStripModel::kNoTab) {
-+          if (dragged_idx + 1 < model->count() && !model->IsTabPinned(dragged_idx + 1)) {
-+            partner_idx = dragged_idx + 1;
-+          } else if (dragged_idx - 1 >= 0 && !model->IsTabPinned(dragged_idx - 1)) {
-+            partner_idx = dragged_idx - 1;
-+          }
-+        }
-+
-+        // 4. Priority: nearest unpinned tab in either direction
-+        if (partner_idx == TabStripModel::kNoTab) {
-+          int best_dist = 999999;
-+          for (int i = 0; i < model->count(); ++i) {
-+            if (i != dragged_idx && !model->IsTabPinned(i)) {
-+              int dist = std::abs(i - dragged_idx);
-+              if (dist < best_dist) {
-+                best_dist = dist;
-+                partner_idx = i;
-+              }
-+            }
-+          }
-+        }
-+
-+        if (partner_idx != TabStripModel::kNoTab) {
-+          content::WebContents* partner_contents = model->GetWebContentsAt(partner_idx);
-+          content::WebContents* left_wc = is_left ? dragged_contents : partner_contents;
-+          content::WebContents* right_wc = is_left ? partner_contents : dragged_contents;
-+
-+          int cur_left = model->GetIndexOfWebContents(left_wc);
-+          int cur_right = model->GetIndexOfWebContents(right_wc);
-+
-+          // If the tab intended for the left side currently has a higher index
-+          // than the tab intended for the right side, move it before the right tab.
-+          if (cur_left != TabStripModel::kNoTab &&
-+              cur_right != TabStripModel::kNoTab &&
-+              cur_left > cur_right) {
-+            model->MoveWebContentsAt(cur_left, cur_right, false);
-+          }
-+
-+          int final_left = model->GetIndexOfWebContents(left_wc);
-+          int final_right = model->GetIndexOfWebContents(right_wc);
-+
-+          if (final_left != TabStripModel::kNoTab &&
-+              final_right != TabStripModel::kNoTab &&
-+              final_left < final_right) {
-+            std::vector<int> pair = {final_left, final_right};
-+            model->AddToNewSplit(pair);
-+
-+            int final_dragged = model->GetIndexOfWebContents(dragged_contents);
-+            if (final_dragged != TabStripModel::kNoTab) {
-+              model->ActivateTabAt(final_dragged);
-+            }
-+
-+            target_bv->ShowSplitView();
-+            target_bv->DeprecatedLayoutImmediately();
-+          }
-+        }
-+      }
-+    }
-+  }
-+
-   if (is_dragging_new_browser_ || did_restore_window_) {
-     if (IsSnapped(attached_context_)) {
-       was_source_maximized_ = false;
-diff --git a/chrome/browser/ui/views/tabs/dragging/tab_drag_controller.h b/chrome/browser/ui/views/tabs/dragging/tab_drag_controller.h
-index 9af3c6f666..1b2be19df5 100644
---- a/chrome/browser/ui/views/tabs/dragging/tab_drag_controller.h
-+++ b/chrome/browser/ui/views/tabs/dragging/tab_drag_controller.h
-@@ -48,6 +48,7 @@ namespace tabs {
- class TabModel;
- }
- class Browser;
-+class BrowserView;
- class EventTracker;
- class Tab;
- class TabDragControllerTest;
-@@ -853,6 +854,12 @@ class TabDragController : public views::WidgetObserver,
- 
-   std::unique_ptr<ui::PresentationTimeRecorder> presentation_time_recorder_;
- 
-+  // VELOX: Drag-to-Split-Screen state tracking.
-+  bool split_drop_active_ = false;
-+  bool split_drop_is_left_ = false;
-+  raw_ptr<BrowserView> split_drop_browser_view_ = nullptr;
-+  int initial_active_index_ = -1;
-+
-   base::WeakPtrFactory<TabDragController> weak_factory_{this};
- };
- 
 diff --git a/chrome/browser/ui/views/tabs/tab_style_views.cc b/chrome/browser/ui/views/tabs/tab_style_views.cc
 index 13203a5559..e2dc26a413 100644
 --- a/chrome/browser/ui/views/tabs/tab_style_views.cc
