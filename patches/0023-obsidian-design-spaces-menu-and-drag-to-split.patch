@@ -1,5 +1,5 @@
 diff --git a/chrome/browser/resources/new_tab_page/app.css b/chrome/browser/resources/new_tab_page/app.css
-index 39980d76da..9a6416860a 100644
+index 39980d76da..74357930c3 100644
 --- a/chrome/browser/resources/new_tab_page/app.css
 +++ b/chrome/browser/resources/new_tab_page/app.css
 @@ -11,16 +11,19 @@
@@ -192,28 +192,23 @@ index 39980d76da..9a6416860a 100644
  }
  
  :host([show-background-image_]) #customizeButton,
-@@ -390,10 +468,19 @@ while the icon has a color rule of it's own. */
+@@ -390,8 +468,14 @@ while the icon has a color rule of it's own. */
    width: 1px;
- }
- 
--svg {
-+svg:not(#veloxLayoutContainer svg):not(.velox-lucide-icon):not(.velox-qa-header-icon) {
-   position: fixed;
  }
  
 +#veloxLayoutContainer svg,
 +.velox-lucide-icon,
-+.velox-qa-header-icon {
++.velox-qa-header-icon,
+ svg {
+-  position: fixed;
 +  position: static !important;
 +  display: inline-block !important;
 +  vertical-align: middle !important;
 +  flex-shrink: 0 !important;
-+}
-+
+ }
+ 
  ntp-lens-upload-dialog {
-   left: 0;
-   position: absolute;
-@@ -413,3 +500,1302 @@ ntp-lens-upload-dialog {
+@@ -413,3 +497,1303 @@ ntp-lens-upload-dialog {
  #microsoftAuth {
    display: none;
  }
@@ -526,6 +521,7 @@ index 39980d76da..9a6416860a 100644
 +  color: #3b82f6;
 +  font-size: 12px;
 +  flex-shrink: 0;
++  margin-right: 6px;
 +}
 +
 +.velox-widget-title-group {
@@ -2981,7 +2977,7 @@ index 53925e0c97..f58cd482a5 100644
    raw_ptr<TabMenuModelDelegate> tab_menu_model_delegate_;
  };
 diff --git a/chrome/browser/ui/tabs/tab_strip_model.cc b/chrome/browser/ui/tabs/tab_strip_model.cc
-index cf154ae45c..38a41e20ce 100644
+index cf154ae45c..3f6150a312 100644
 --- a/chrome/browser/ui/tabs/tab_strip_model.cc
 +++ b/chrome/browser/ui/tabs/tab_strip_model.cc
 @@ -433,6 +433,13 @@ std::unique_ptr<DetachedTab> TabStripModel::DetachTabImpl(
@@ -3311,7 +3307,18 @@ index cf154ae45c..38a41e20ce 100644
    }
  
    if (initial_pinned_state != tab->IsPinned()) {
-@@ -3468,80 +3674,32 @@ std::optional<int> TabStripModel::DetermineNewSelectedIndex(
+@@ -3353,6 +3559,10 @@ void TabStripModel::OnActiveTabChanged(
+   const tabs::TabInterface* old_opener = nullptr;
+   int reason = selection.reason;
+ 
++  if (old_tab && old_tab->GetContents()) {
++    previous_active_contents_ = old_tab->GetContents()->GetWeakPtr();
++  }
++
+   if (old_tab) {
+     const int index = GetIndexOfTab(old_tab);
+     if (index != TabStripModel::kNoTab) {
+@@ -3468,80 +3678,32 @@ std::optional<int> TabStripModel::DetermineNewSelectedIndex(
      int removing_index) const {
    DCHECK(ContainsIndex(removing_index));
  
@@ -3407,10 +3414,22 @@ index cf154ae45c..38a41e20ce 100644
  
  TabStripModel::ScopedTabStripModalUIImpl::ScopedTabStripModalUIImpl(
 diff --git a/chrome/browser/ui/tabs/tab_strip_model.h b/chrome/browser/ui/tabs/tab_strip_model.h
-index f8c716fc0c..4e8e1c8cec 100644
+index f8c716fc0c..990b5f6abd 100644
 --- a/chrome/browser/ui/tabs/tab_strip_model.h
 +++ b/chrome/browser/ui/tabs/tab_strip_model.h
-@@ -513,6 +513,20 @@ class TabStripModel : public TabGroupController {
+@@ -339,6 +339,11 @@ class TabStripModel : public TabGroupController {
+   // Returns the currently active Tab, or NULL if there is none.
+   tabs::TabInterface* GetActiveTab() const;
+ 
++  // VELOX: Returns the WebContents that was active immediately before the current active tab, or NULL.
++  content::WebContents* previous_active_contents() const {
++    return previous_active_contents_.get();
++  }
++
+   // Returns the WebContents at the specified index, or NULL if there is
+   // none.
+   content::WebContents* GetWebContentsAt(int index) const;
+@@ -513,6 +518,20 @@ class TabStripModel : public TabGroupController {
    // ascending order.
    void AddToNewSplit(const std::vector<int> indices);
  
@@ -3431,7 +3450,7 @@ index f8c716fc0c..4e8e1c8cec 100644
    // Create a new tab group and add the set of tabs pointed to be |indices| to
    // it. Pins all of the tabs if any of them were pinned, and reorders the tabs
    // so they are contiguous and do not split an existing group in half. Returns
-@@ -595,6 +609,7 @@ class TabStripModel : public TabGroupController {
+@@ -595,6 +614,7 @@ class TabStripModel : public TabGroupController {
      CommandAddToNewComparisonTable,
      CommandAddToExistingComparisonTable,
      CommandAddToSplit,
@@ -3439,7 +3458,7 @@ index f8c716fc0c..4e8e1c8cec 100644
      CommandRemoveFromGroup,
      CommandMoveToExistingWindow,
      CommandMoveTabsToNewWindow,
-@@ -603,6 +618,7 @@ class TabStripModel : public TabGroupController {
+@@ -603,6 +623,7 @@ class TabStripModel : public TabGroupController {
      CommandGoBack,
      CommandCloseAllTabs,
      CommandCommerceProductSpecifications,
@@ -3447,7 +3466,7 @@ index f8c716fc0c..4e8e1c8cec 100644
      CommandLast
    };
  
-@@ -1040,6 +1056,18 @@ class TabStripModel : public TabGroupController {
+@@ -1040,6 +1061,21 @@ class TabStripModel : public TabGroupController {
    // Tracks whether a modal UI is showing.
    bool showing_modal_ui_ = false;
  
@@ -3458,6 +3477,9 @@ index f8c716fc0c..4e8e1c8cec 100644
 +
 +  // Monotonic id source for split pairs (see TabModel::split_id()).
 +  int next_split_id_ = 1;
++
++  // VELOX: Track the previously active WebContents so split operations know the prior context.
++  base::WeakPtr<content::WebContents> previous_active_contents_;
 +
 +  // Clears split state on tabs that no longer sit next to their partner.
 +  // Notifies observers if anything changed.
@@ -5190,21 +5212,24 @@ index a81ff31023..7dc3a25b0f 100644
    if (location_icon_view_ && location_icon_view_->GetBackground()) {
      dark_mode =
 diff --git a/chrome/browser/ui/views/tabs/dragging/tab_drag_controller.cc b/chrome/browser/ui/views/tabs/dragging/tab_drag_controller.cc
-index babed73919..720a20d5a1 100644
+index babed73919..f185abc9b8 100644
 --- a/chrome/browser/ui/views/tabs/dragging/tab_drag_controller.cc
 +++ b/chrome/browser/ui/views/tabs/dragging/tab_drag_controller.cc
-@@ -511,6 +511,10 @@ TabDragController::Liveness TabDragController::Init(
+@@ -511,6 +511,13 @@ TabDragController::Liveness TabDragController::Init(
          source_view->width();
    }
    ref->initial_selection_model_ = std::move(initial_selection_model);
-+  if (ref->source_context_ && ref->source_context_->GetTabStripModel()) {
++  if (ref->initial_selection_model_.active().has_value()) {
++    ref->initial_active_index_ =
++        static_cast<int>(ref->initial_selection_model_.active().value());
++  } else if (ref->source_context_ && ref->source_context_->GetTabStripModel()) {
 +    ref->initial_active_index_ =
 +        ref->source_context_->GetTabStripModel()->active_index();
 +  }
  
    ref->window_finder_ = std::make_unique<WindowFinder>();
  
-@@ -1261,6 +1265,49 @@ void TabDragController::MoveAttached(const gfx::Point& point_in_screen,
+@@ -1261,6 +1268,49 @@ void TabDragController::MoveAttached(const gfx::Point& point_in_screen,
  
    gfx::Point dragged_view_point = GetAttachedDragPoint(point_in_screen);
  
@@ -5254,7 +5279,7 @@ index babed73919..720a20d5a1 100644
    const int threshold = attached_context_->GetHorizontalDragThreshold();
  
    std::vector<raw_ptr<TabSlotView, VectorExperimental>> views(
-@@ -1396,15 +1443,47 @@ TabDragController::Liveness TabDragController::GetTargetTabStripForPoint(
+@@ -1396,15 +1446,47 @@ TabDragController::Liveness TabDragController::GetTargetTabStripForPoint(
    }
  
    if (local_window && CanAttachTo(local_window)) {
@@ -5305,7 +5330,7 @@ index babed73919..720a20d5a1 100644
    }
  
    *context = current_state_ == DragState::kDraggingWindow
-@@ -1848,6 +1927,14 @@ void TabDragController::EndDragImpl(EndDragType type) {
+@@ -1848,6 +1930,14 @@ void TabDragController::EndDragImpl(EndDragType type) {
    VLOG(1) << __func__ << " type=" << type
            << " state=" << static_cast<int>(current_state_);
  
@@ -5320,7 +5345,7 @@ index babed73919..720a20d5a1 100644
    DragState previous_state = current_state_;
    current_state_ = DragState::kStopped;
    attached_context_tabs_closed_tracker_.reset();
-@@ -2130,6 +2217,45 @@ void TabDragController::CompleteDrag() {
+@@ -2130,6 +2220,101 @@ void TabDragController::CompleteDrag() {
    CHECK_NE(current_state_, DragState::kNotStarted);
    CHECK(attached_context_);
  
@@ -5337,28 +5362,84 @@ index babed73919..720a20d5a1 100644
 +      content::WebContents* dragged_contents = drag_data_[0].contents;
 +      int dragged_idx = model->GetIndexOfWebContents(dragged_contents);
 +
-+      int partner_idx = TabStripModel::kNoTab;
-+      if (initial_active_index_ != TabStripModel::kNoTab &&
-+          initial_active_index_ != dragged_idx &&
-+          initial_active_index_ < model->count()) {
-+        partner_idx = initial_active_index_;
-+      } else {
-+        for (int i = 0; i < model->count(); ++i) {
-+          if (i != dragged_idx) {
-+            partner_idx = i;
-+            break;
++      if (dragged_idx != TabStripModel::kNoTab && !model->IsTabPinned(dragged_idx)) {
++        int partner_idx = TabStripModel::kNoTab;
++
++        // 1. Priority: the tab active before this drag started
++        if (initial_active_index_ != TabStripModel::kNoTab &&
++            initial_active_index_ != dragged_idx &&
++            initial_active_index_ < model->count() &&
++            !model->IsTabPinned(initial_active_index_)) {
++          partner_idx = initial_active_index_;
++        }
++
++        // 2. Priority: model's previous_active_contents()
++        if (partner_idx == TabStripModel::kNoTab && model->previous_active_contents()) {
++          int prev_idx = model->GetIndexOfWebContents(model->previous_active_contents());
++          if (prev_idx != TabStripModel::kNoTab &&
++              prev_idx != dragged_idx &&
++              !model->IsTabPinned(prev_idx)) {
++            partner_idx = prev_idx;
 +          }
 +        }
-+      }
 +
-+      if (dragged_idx != TabStripModel::kNoTab &&
-+          partner_idx != TabStripModel::kNoTab) {
-+        int first = is_left ? dragged_idx : partner_idx;
-+        int second = is_left ? partner_idx : dragged_idx;
-+        std::vector<int> pair = {std::min(first, second),
-+                                 std::max(first, second)};
-+        model->AddToNewSplit(pair);
-+        model->ActivateTabAt(dragged_idx);
++        // 3. Priority: adjacent unpinned tab (prefer right, then left)
++        if (partner_idx == TabStripModel::kNoTab) {
++          if (dragged_idx + 1 < model->count() && !model->IsTabPinned(dragged_idx + 1)) {
++            partner_idx = dragged_idx + 1;
++          } else if (dragged_idx - 1 >= 0 && !model->IsTabPinned(dragged_idx - 1)) {
++            partner_idx = dragged_idx - 1;
++          }
++        }
++
++        // 4. Priority: nearest unpinned tab in either direction
++        if (partner_idx == TabStripModel::kNoTab) {
++          int best_dist = 999999;
++          for (int i = 0; i < model->count(); ++i) {
++            if (i != dragged_idx && !model->IsTabPinned(i)) {
++              int dist = std::abs(i - dragged_idx);
++              if (dist < best_dist) {
++                best_dist = dist;
++                partner_idx = i;
++              }
++            }
++          }
++        }
++
++        if (partner_idx != TabStripModel::kNoTab) {
++          content::WebContents* partner_contents = model->GetWebContentsAt(partner_idx);
++          content::WebContents* left_wc = is_left ? dragged_contents : partner_contents;
++          content::WebContents* right_wc = is_left ? partner_contents : dragged_contents;
++
++          int cur_left = model->GetIndexOfWebContents(left_wc);
++          int cur_right = model->GetIndexOfWebContents(right_wc);
++
++          // If the tab intended for the left side currently has a higher index
++          // than the tab intended for the right side, move it before the right tab.
++          if (cur_left != TabStripModel::kNoTab &&
++              cur_right != TabStripModel::kNoTab &&
++              cur_left > cur_right) {
++            model->MoveWebContentsAt(cur_left, cur_right, false);
++          }
++
++          int final_left = model->GetIndexOfWebContents(left_wc);
++          int final_right = model->GetIndexOfWebContents(right_wc);
++
++          if (final_left != TabStripModel::kNoTab &&
++              final_right != TabStripModel::kNoTab &&
++              final_left < final_right) {
++            std::vector<int> pair = {final_left, final_right};
++            model->AddToNewSplit(pair);
++
++            int final_dragged = model->GetIndexOfWebContents(dragged_contents);
++            if (final_dragged != TabStripModel::kNoTab) {
++              model->ActivateTabAt(final_dragged);
++            }
++
++            target_bv->ShowSplitView();
++            target_bv->DeprecatedLayoutImmediately();
++          }
++        }
 +      }
 +    }
 +  }
