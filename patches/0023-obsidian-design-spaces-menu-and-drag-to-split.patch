@@ -5571,7 +5571,7 @@ index 13203a5559..e2dc26a413 100644
  
  float TabStyleViewsImpl::GetTopCornerRadiusForWidth(int width) const {
 diff --git a/chrome/browser/ui/views/toolbar/toolbar_view.cc b/chrome/browser/ui/views/toolbar/toolbar_view.cc
-index 27efd0c423..1b59b9ea76 100644
+index 27efd0c423..c5b4535d8c 100644
 --- a/chrome/browser/ui/views/toolbar/toolbar_view.cc
 +++ b/chrome/browser/ui/views/toolbar/toolbar_view.cc
 @@ -17,20 +17,26 @@
@@ -5612,7 +5612,7 @@ index 27efd0c423..1b59b9ea76 100644
  #include "chrome/common/chrome_features.h"
  #include "chrome/common/pref_names.h"
  #include "chrome/grit/branded_strings.h"
-@@ -112,10 +122,34 @@
+@@ -112,10 +122,41 @@
  #include "ui/views/accessibility/view_accessibility.h"
  #include "ui/views/background.h"
  #include "ui/views/cascading_property.h"
@@ -5620,12 +5620,19 @@ index 27efd0c423..1b59b9ea76 100644
 +#include "third_party/skia/include/effects/SkGradientShader.h"
 +#include "ui/views/bubble/bubble_dialog_delegate_view.h"
 +#include "ui/views/controls/button/md_text_button.h"
++#include "ui/views/controls/image_view.h"
 +#include "ui/views/controls/label.h"
 +#include "ui/views/layout/box_layout.h"
  #include "ui/views/layout/fill_layout.h"
  #include "ui/views/layout/flex_layout.h"
  #include "ui/views/layout/proposed_layout.h"
  #include "ui/views/view_class_properties.h"
++#include "ui/gfx/animation/slide_animation.h"
++#include "ui/views/animation/animation_delegate_views.h"
++#include "base/timer/timer.h"
++#include "chrome/browser/ui/tabs/tab_enums.h"
++#include "components/vector_icons/vector_icons.h"
++#include "ui/display/screen.h"
 +#include <map>
 +#include <set>
 +#include <vector>
@@ -5647,7 +5654,7 @@ index 27efd0c423..1b59b9ea76 100644
  #include "ui/views/widget/tooltip_manager.h"
  #include "ui/views/widget/widget.h"
  #include "ui/views/window/non_client_view.h"
-@@ -199,8 +233,1968 @@ class TabstripLikeBackground : public views::Background {
+@@ -199,8 +240,2550 @@ class TabstripLikeBackground : public views::Background {
    const raw_ptr<BrowserView> browser_view_;
  };
  
@@ -6091,6 +6098,8 @@ index 27efd0c423..1b59b9ea76 100644
 +  std::u16string space_names[3] = {u"General", u"Work", u"Focus"};
 +  bool space_names_loaded = false;
 +  raw_ptr<views::Widget> active_rename_bubble_widget = nullptr;
++  raw_ptr<views::Widget> active_preview_bubble_widget = nullptr;
++  int active_preview_space = -1;
 +};
 +
 +VeloxRuntimeState& GetVeloxState() {
@@ -7325,9 +7334,359 @@ index 27efd0c423..1b59b9ea76 100644
 +END_METADATA
 +
 +// ============================================================================
-+// VeloxSpacesControl: Toolbar Segmented Pill for Spaces 1 / 2 / 3
++// VeloxSpaceTabRowView: Interactive Row for Workspace Tabs in Preview Bubble
++// ============================================================================
++class VeloxSpaceTabRowView : public views::Button {
++  METADATA_HEADER(VeloxSpaceTabRowView, views::Button)
++
++ public:
++  VeloxSpaceTabRowView(Browser* browser,
++                       int space_index,
++                       int model_index,
++                       const std::u16string& title,
++                       const GURL& url,
++                       const ui::ImageModel& favicon,
++                       bool is_active,
++                       bool is_audio,
++                       base::RepeatingClosure click_cb)
++      : views::Button(base::BindRepeating(&VeloxSpaceTabRowView::OnRowClicked,
++                                          base::Unretained(this))),
++        browser_(browser),
++        space_index_(space_index),
++        model_index_(model_index),
++        is_active_(is_active),
++        click_cb_(std::move(click_cb)) {
++    SetFocusBehavior(views::View::FocusBehavior::NEVER);
++    SetPreferredSize(gfx::Size(270, 34));
++
++    auto* layout = SetLayoutManager(std::make_unique<views::BoxLayout>(
++        views::BoxLayout::Orientation::kHorizontal, gfx::Insets::VH(3, 8), 8));
++    layout->set_cross_axis_alignment(
++        views::BoxLayout::CrossAxisAlignment::kCenter);
++
++    // 1. Favicon
++    auto* icon_view = AddChildView(std::make_unique<views::ImageView>());
++    icon_view->SetImageSize(gfx::Size(16, 16));
++    if (!favicon.IsEmpty()) {
++      icon_view->SetImage(favicon);
++    } else {
++      icon_view->SetImage(ui::ImageModel::FromVectorIcon(
++          vector_icons::kGlobeIcon, SkColorSetRGB(148, 163, 184), 16));
++    }
++
++    // 2. Title & Domain container (Vertical)
++    auto* text_col = AddChildView(std::make_unique<views::View>());
++    auto* text_layout = text_col->SetLayoutManager(
++        std::make_unique<views::BoxLayout>(
++            views::BoxLayout::Orientation::kVertical, gfx::Insets(), 1));
++    text_layout->set_cross_axis_alignment(
++        views::BoxLayout::CrossAxisAlignment::kStart);
++    layout->SetFlexForView(text_col, 1);
++
++    std::u16string disp_title = title.empty() ? u"New Tab" : title;
++    auto* title_lbl = text_col->AddChildView(std::make_unique<views::Label>(
++        disp_title, views::style::CONTEXT_LABEL, views::style::STYLE_PRIMARY));
++    title_lbl->SetHorizontalAlignment(gfx::ALIGN_LEFT);
++    title_lbl->SetElideBehavior(gfx::ELIDE_TAIL);
++    title_lbl->SetMaximumWidthSingleLine(180);
++    title_lbl->SetEnabledColor(is_active_ ? SkColorSetRGB(255, 255, 255)
++                                          : SkColorSetRGB(226, 232, 240));
++    title_lbl->SetFontList(title_lbl->font_list().Derive(
++        -1, gfx::Font::NORMAL,
++        is_active_ ? gfx::Font::Weight::BOLD : gfx::Font::Weight::NORMAL));
++
++    std::string host = url.host();
++    if (host.empty() && url.SchemeIs("chrome")) {
++      host = "velox";
++    }
++    if (!host.empty()) {
++      auto* host_lbl = text_col->AddChildView(std::make_unique<views::Label>(
++          base::UTF8ToUTF16(host), views::style::CONTEXT_LABEL,
++          views::style::STYLE_SECONDARY));
++      host_lbl->SetHorizontalAlignment(gfx::ALIGN_LEFT);
++      host_lbl->SetElideBehavior(gfx::ELIDE_TAIL);
++      host_lbl->SetMaximumWidthSingleLine(180);
++      host_lbl->SetEnabledColor(SkColorSetRGB(100, 116, 139));
++      host_lbl->SetFontList(host_lbl->font_list().Derive(
++          -2, gfx::Font::NORMAL, gfx::Font::Weight::NORMAL));
++    }
++
++    // 3. Audio Indicator if playing
++    if (is_audio) {
++      auto* audio_lbl = AddChildView(std::make_unique<views::Label>(
++          u"🔊", views::style::CONTEXT_LABEL, views::style::STYLE_PRIMARY));
++      audio_lbl->SetTooltipText(u"Playing Audio");
++    }
++
++    // 4. Active tab indicator
++    if (is_active_) {
++      auto* active_badge = AddChildView(std::make_unique<views::Label>(
++          u"• Active", views::style::CONTEXT_LABEL, views::style::STYLE_SECONDARY));
++      active_badge->SetEnabledColor(SkColorSetRGB(59, 130, 246));
++      active_badge->SetFontList(active_badge->font_list().Derive(
++          -2, gfx::Font::NORMAL, gfx::Font::Weight::SEMIBOLD));
++    }
++  }
++
++  void OnPaintBackground(gfx::Canvas* canvas) override {
++    const bool is_hovered = GetState() == views::Button::STATE_HOVERED ||
++                            GetState() == views::Button::STATE_PRESSED;
++    if (is_hovered || is_active_) {
++      gfx::ScopedCanvas scoped(canvas);
++      const float s = canvas->UndoDeviceScaleFactor();
++      gfx::RectF rf(GetLocalBounds());
++      rf.Scale(s);
++      rf.Inset(1.0f * s);
++      SkRRect rrect;
++      rrect.setRectXY(gfx::RectFToSkRect(rf), 6.0f * s, 6.0f * s);
++
++      cc::PaintFlags flags;
++      flags.setAntiAlias(true);
++      flags.setStyle(cc::PaintFlags::kFill_Style);
++      if (is_hovered) {
++        flags.setColor(is_active_ ? SkColorSetARGB(80, 59, 130, 246)
++                                  : SkColorSetARGB(35, 255, 255, 255));
++      } else {
++        flags.setColor(SkColorSetARGB(35, 59, 130, 246));
++      }
++      canvas->sk_canvas()->drawRRect(rrect, flags);
++    }
++  }
++
++ private:
++  void OnRowClicked() {
++    if (browser_) {
++      velox::SwitchWorkspace(browser_, space_index_);
++      if (browser_->tab_strip_model() &&
++          browser_->tab_strip_model()->ContainsIndex(model_index_)) {
++        browser_->tab_strip_model()->ActivateTabAt(model_index_);
++      }
++    }
++    if (click_cb_) {
++      click_cb_.Run();
++    }
++  }
++
++  raw_ptr<Browser> browser_ = nullptr;
++  int space_index_ = 0;
++  int model_index_ = 0;
++  bool is_active_ = false;
++  base::RepeatingClosure click_cb_;
++};
++
++BEGIN_METADATA(VeloxSpaceTabRowView)
++END_METADATA
++
++// ============================================================================
++// VeloxSpaceTabPreviewBubble: Hover Preview Card for Workspace Tabs
++// ============================================================================
++class VeloxSpaceTabPreviewBubble : public views::BubbleDialogDelegateView {
++  METADATA_HEADER(VeloxSpaceTabPreviewBubble, views::BubbleDialogDelegateView)
++
++ public:
++  static void Show(views::View* anchor_view, Browser* browser, int space_index) {
++    auto& st = GetVeloxState();
++    if (st.active_preview_bubble_widget) {
++      if (st.active_preview_space == space_index) {
++        return;
++      }
++      ClosePreview();
++    }
++
++    auto bubble = std::make_unique<VeloxSpaceTabPreviewBubble>(
++        anchor_view, browser, space_index);
++    views::Widget* widget =
++        views::BubbleDialogDelegateView::CreateBubble(std::move(bubble));
++    st.active_preview_bubble_widget = widget;
++    st.active_preview_space = space_index;
++    widget->Show();
++  }
++
++  static void ClosePreview() {
++    auto& st = GetVeloxState();
++    if (st.active_preview_bubble_widget) {
++      st.active_preview_bubble_widget->Close();
++      st.active_preview_bubble_widget = nullptr;
++      st.active_preview_space = -1;
++    }
++  }
++
++  VeloxSpaceTabPreviewBubble(views::View* anchor_view,
++                             Browser* browser,
++                             int space_index)
++      : BubbleDialogDelegateView(anchor_view, views::BubbleBorder::TOP_LEFT),
++        browser_(browser),
++        space_index_(space_index) {
++    SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
++    set_margins(gfx::Insets::VH(10, 12));
++    set_color(SkColorSetRGB(15, 20, 30));
++    SetCanActivate(false);
++    set_highlight_button_when_shown(false);
++    SetTitle(u"Velox Space Preview");
++    SetShowTitle(false);
++    SetShowCloseButton(false);
++    set_shadow(views::BubbleBorder::STANDARD_SHADOW);
++  }
++
++  ~VeloxSpaceTabPreviewBubble() override {
++    if (GetVeloxState().active_preview_bubble_widget == GetWidget()) {
++      GetVeloxState().active_preview_bubble_widget = nullptr;
++      GetVeloxState().active_preview_space = -1;
++    }
++  }
++
++  void Init() override {
++    auto* layout = SetLayoutManager(std::make_unique<views::BoxLayout>(
++        views::BoxLayout::Orientation::kVertical, gfx::Insets(), 6));
++    layout->set_cross_axis_alignment(
++        views::BoxLayout::CrossAxisAlignment::kStretch);
++
++    struct TabInfo {
++      int model_idx;
++      std::u16string title;
++      GURL url;
++      ui::ImageModel favicon;
++      bool is_active;
++      bool is_audio;
++    };
++    std::vector<TabInfo> space_tabs;
++
++    BrowserView* bv =
++        browser_ ? BrowserView::GetBrowserViewForBrowser(browser_) : nullptr;
++    TabStrip* tab_strip = bv ? bv->tabstrip() : nullptr;
++    if (tab_strip && browser_->tab_strip_model()) {
++      for (int i = 0; i < tab_strip->GetTabCount(); ++i) {
++        Tab* t = velox::SafeGetTab(tab_strip, i);
++        if (!t || t->closing()) {
++          continue;
++        }
++        if (velox::GetTabWorkspace(t) == space_index_) {
++          bool audio = false;
++          for (TabAlertState alert : t->data().alert_state) {
++            if (alert == TabAlertState::AUDIO_PLAYING) {
++              audio = true;
++              break;
++            }
++          }
++          space_tabs.push_back({
++              i,
++              t->data().title,
++              t->data().visible_url,
++              t->data().favicon,
++              t->IsActive(),
++              audio,
++          });
++        }
++      }
++    }
++
++    const int cur_ws =
++        tab_strip ? velox::GetTabStripActiveWorkspace(tab_strip) : 0;
++    const bool is_current_space = (cur_ws == space_index_);
++
++    // 1. Header Row
++    auto* header = AddChildView(std::make_unique<views::View>());
++    auto* h_layout =
++        header->SetLayoutManager(std::make_unique<views::BoxLayout>(
++            views::BoxLayout::Orientation::kHorizontal, gfx::Insets::VH(0, 2), 6));
++    h_layout->set_cross_axis_alignment(
++        views::BoxLayout::CrossAxisAlignment::kCenter);
++
++    const std::u16string kIcons[3] = {u"◈", u"💼", u"🎯"};
++    std::u16string space_title =
++        (space_index_ >= 0 && space_index_ < 3 ? kIcons[space_index_] : u"◈") +
++        u" " + base::NumberToString16(space_index_ + 1) + u" " +
++        velox::GetSpaceName(space_index_);
++    auto* space_lbl = header->AddChildView(std::make_unique<views::Label>(
++        space_title, views::style::CONTEXT_DIALOG_TITLE,
++        views::style::STYLE_PRIMARY));
++    space_lbl->SetHorizontalAlignment(gfx::ALIGN_LEFT);
++    space_lbl->SetEnabledColor(SkColorSetRGB(241, 245, 249));
++    space_lbl->SetFontList(space_lbl->font_list().Derive(
++        1, gfx::Font::NORMAL, gfx::Font::Weight::BOLD));
++    h_layout->SetFlexForView(space_lbl, 1);
++
++    if (is_current_space) {
++      auto* active_pill = header->AddChildView(std::make_unique<views::Label>(
++          u"Active", views::style::CONTEXT_LABEL, views::style::STYLE_SECONDARY));
++      active_pill->SetEnabledColor(SkColorSetRGB(96, 165, 250));
++      active_pill->SetFontList(active_pill->font_list().Derive(
++          -2, gfx::Font::NORMAL, gfx::Font::Weight::BOLD));
++    }
++
++    std::u16string count_text = base::NumberToString16(space_tabs.size()) +
++                                (space_tabs.size() == 1 ? u" tab" : u" tabs");
++    auto* count_lbl = header->AddChildView(std::make_unique<views::Label>(
++        count_text, views::style::CONTEXT_LABEL,
++        views::style::STYLE_SECONDARY));
++    count_lbl->SetEnabledColor(SkColorSetRGB(148, 163, 184));
++    count_lbl->SetFontList(count_lbl->font_list().Derive(
++        -2, gfx::Font::NORMAL, gfx::Font::Weight::SEMIBOLD));
++
++    // Hairline divider
++    auto* divider = AddChildView(std::make_unique<views::View>());
++    divider->SetPreferredSize(gfx::Size(270, 1));
++    divider->SetBackground(
++        views::CreateSolidBackground(SkColorSetARGB(35, 255, 255, 255)));
++
++    // Tab Rows or Empty State
++    if (space_tabs.empty()) {
++      auto* empty_box = AddChildView(std::make_unique<views::View>());
++      auto* e_layout =
++          empty_box->SetLayoutManager(std::make_unique<views::BoxLayout>(
++              views::BoxLayout::Orientation::kVertical, gfx::Insets::VH(10, 4),
++              3));
++      e_layout->set_cross_axis_alignment(
++          views::BoxLayout::CrossAxisAlignment::kCenter);
++
++      auto* empty_msg = empty_box->AddChildView(std::make_unique<views::Label>(
++          u"No tabs in this space", views::style::CONTEXT_LABEL,
++          views::style::STYLE_PRIMARY));
++      empty_msg->SetEnabledColor(SkColorSetRGB(203, 213, 225));
++      empty_msg->SetFontList(empty_msg->font_list().Derive(
++          -1, gfx::Font::NORMAL, gfx::Font::Weight::SEMIBOLD));
++
++      auto* empty_sub = empty_box->AddChildView(std::make_unique<views::Label>(
++          u"Click to switch or move tabs here via right-click",
++          views::style::CONTEXT_LABEL, views::style::STYLE_SECONDARY));
++      empty_sub->SetEnabledColor(SkColorSetRGB(100, 116, 139));
++      empty_sub->SetFontList(empty_sub->font_list().Derive(
++          -2, gfx::Font::NORMAL, gfx::Font::Weight::NORMAL));
++    } else {
++      const size_t max_show = 7;
++      for (size_t i = 0; i < std::min(space_tabs.size(), max_show); ++i) {
++        const auto& t = space_tabs[i];
++        AddChildView(std::make_unique<VeloxSpaceTabRowView>(
++            browser_, space_index_, t.model_idx, t.title, t.url, t.favicon,
++            t.is_active, t.is_audio,
++            base::BindRepeating(&VeloxSpaceTabPreviewBubble::ClosePreview)));
++      }
++      if (space_tabs.size() > max_show) {
++        auto* more_lbl = AddChildView(std::make_unique<views::Label>(
++            u"+ " + base::NumberToString16(space_tabs.size() - max_show) +
++                u" more tabs",
++            views::style::CONTEXT_LABEL, views::style::STYLE_SECONDARY));
++        more_lbl->SetHorizontalAlignment(gfx::ALIGN_CENTER);
++        more_lbl->SetEnabledColor(SkColorSetRGB(148, 163, 184));
++        more_lbl->SetFontList(more_lbl->font_list().Derive(
++            -2, gfx::Font::ITALIC, gfx::Font::Weight::NORMAL));
++      }
++    }
++  }
++
++ private:
++  raw_ptr<Browser> browser_ = nullptr;
++  int space_index_ = 0;
++};
++
++BEGIN_METADATA(VeloxSpaceTabPreviewBubble)
++END_METADATA
++
++// ============================================================================
++// VeloxSpacesControl: Morphing Spaces Pill with Tab Hover Previews
 +// ============================================================================
 +class VeloxSpacesControl : public views::View,
++                           public views::AnimationDelegateViews,
 +                           public ui::SimpleMenuModel::Delegate {
 +  METADATA_HEADER(VeloxSpacesControl, views::View)
 +
@@ -7339,22 +7698,29 @@ index 27efd0c423..1b59b9ea76 100644
 +    kCommandResetName,
 +  };
 +
-+  explicit VeloxSpacesControl(Browser* browser) : browser_(browser) {
++  explicit VeloxSpacesControl(Browser* browser)
++      : views::AnimationDelegateViews(this),
++        browser_(browser),
++        morph_animation_(this) {
 +    if (browser_ && browser_->profile()) {
 +      velox::LoadSpaceNames(browser_->profile());
 +    }
++    morph_animation_.SetSlideDuration(base::Milliseconds(220));
++    morph_animation_.SetTweenType(gfx::Tween::FAST_OUT_SLOW_IN);
++
 +    UpdateTooltip();
 +    GetViewAccessibility().SetName(u"Velox Workspaces");
 +    GetVeloxState().spaces_controls.insert(this);
 +  }
 +
 +  ~VeloxSpacesControl() override {
++    VeloxSpaceTabPreviewBubble::ClosePreview();
 +    GetVeloxState().spaces_controls.erase(this);
 +  }
 +
 +  void UpdateTooltip() {
 +    std::u16string tip =
-+        u"Velox Spaces: Click to switch • Double-click or Right-click to rename • "
++        u"Velox Spaces: Click to expand • Double-click or Right-click to rename • "
 +        u"Ctrl+1 / Ctrl+2 / Ctrl+3\n";
 +    for (int i = 0; i < 3; ++i) {
 +      tip += u"[" + base::NumberToString16(i + 1) + u"] " + velox::GetSpaceName(i);
@@ -7383,38 +7749,105 @@ index 27efd0c423..1b59b9ea76 100644
 +  }
 +
 +  int GetSegmentWidth(int i, int active) const {
-+    if (i != active) {
-+      return 28;
++    if (i == active) {
++      const gfx::FontList bold_font = gfx::FontList().Derive(
++          0, gfx::Font::NORMAL, gfx::Font::Weight::BOLD);
++      const std::u16string kIcons[3] = {u"◈", u"💼", u"🎯"};
++      std::u16string label = (i >= 0 && i < 3 ? kIcons[i] : u"◈") +
++                             u" " + base::NumberToString16(i + 1) + u" " +
++                             velox::GetSpaceName(i);
++      int text_w = gfx::Canvas::GetStringWidth(label, bold_font);
++      return std::clamp(text_w + 16, 60, 120);
 +    }
++    const gfx::FontList semi_font = gfx::FontList().Derive(
++        0, gfx::Font::NORMAL, gfx::Font::Weight::SEMIBOLD);
++    const std::u16string kIcons[3] = {u"◈", u"💼", u"🎯"};
++    std::u16string label = (i >= 0 && i < 3 ? kIcons[i] : u"◈") +
++                           u" " + base::NumberToString16(i + 1);
++    int text_w = gfx::Canvas::GetStringWidth(label, semi_font);
++    return std::clamp(text_w + 12, 32, 44);
++  }
++
++  int GetCollapsedWidth() const {
++    const int active = GetActiveSpace();
 +    const gfx::FontList bold_font = gfx::FontList().Derive(
 +        0, gfx::Font::NORMAL, gfx::Font::Weight::BOLD);
-+    std::u16string label =
-+        base::NumberToString16(i + 1) + u" " + velox::GetSpaceName(i);
++    const std::u16string kIcons[3] = {u"◈", u"💼", u"🎯"};
++    std::u16string label = (active >= 0 && active < 3 ? kIcons[active] : u"◈") +
++                           u" " + base::NumberToString16(active + 1) + u" " +
++                           velox::GetSpaceName(active) + u"  ▾";
 +    int text_w = gfx::Canvas::GetStringWidth(label, bold_font);
-+    return std::clamp(text_w + 16, 56, 120);
++    return std::clamp(text_w + 22, 75, 135);
++  }
++
++  int GetExpandedWidth() const {
++    const int active = GetActiveSpace();
++    int total_w = 6;
++    for (int i = 0; i < 3; ++i) {
++      total_w += GetSegmentWidth(i, active) + 2;
++    }
++    total_w += 22;  // Collapse '◂' button
++    return total_w;
 +  }
 +
 +  gfx::Size CalculatePreferredSize(
 +      const views::SizeBounds& available_size) const override {
-+    int active = GetActiveSpace();
-+    int total_w = 8;
-+    for (int i = 0; i < 3; ++i) {
-+      total_w += GetSegmentWidth(i, active);
-+    }
-+    return gfx::Size(total_w, 28);
++    int col_w = GetCollapsedWidth();
++    int exp_w = GetExpandedWidth();
++    double progress = morph_animation_.GetCurrentValue();
++    int current_w = gfx::Tween::IntValueBetween(progress, col_w, exp_w);
++    return gfx::Size(current_w, 28);
 +  }
 +
++  void AnimationProgressed(const gfx::Animation* animation) override {
++    PreferredSizeChanged();
++    SchedulePaint();
++  }
++
++  void AnimationEnded(const gfx::Animation* animation) override {
++    PreferredSizeChanged();
++    SchedulePaint();
++  }
++
++  void Expand() {
++    if (is_expanded_) {
++      return;
++    }
++    is_expanded_ = true;
++    auto_collapse_timer_.Stop();
++    morph_animation_.Show();
++  }
++
++  void Collapse() {
++    if (!is_expanded_) {
++      return;
++    }
++    is_expanded_ = false;
++    auto_collapse_timer_.Stop();
++    VeloxSpaceTabPreviewBubble::ClosePreview();
++    morph_animation_.Hide();
++  }
++
++  // Returns:
++  // 0, 1, 2 for space 0, 1, 2.
++  // -2 for the collapse button '◂' at the end of the expanded bar.
 +  int HitSpaceIndex(int x) const {
-+    int active = GetActiveSpace();
++    if (!is_expanded_ && !morph_animation_.is_animating()) {
++      return GetActiveSpace();
++    }
++    const int active = GetActiveSpace();
 +    int cur_x = 3;
 +    for (int i = 0; i < 3; ++i) {
 +      int seg_w = GetSegmentWidth(i, active);
-+      if (x < cur_x + seg_w || i == 2) {
++      if (x < cur_x + seg_w) {
 +        return i;
 +      }
-+      cur_x += seg_w + 1;
++      cur_x += seg_w + 2;
 +    }
-+    return 0;
++    if (x >= cur_x) {
++      return -2;
++    }
++    return 2;
 +  }
 +
 +  bool OnMousePressed(const ui::MouseEvent& event) override {
@@ -7422,43 +7855,125 @@ index 27efd0c423..1b59b9ea76 100644
 +
 +    // Double-click opens rename dialog directly
 +    if (event.flags() & ui::EF_IS_DOUBLE_CLICK) {
-+      VeloxRenameSpaceBubble::Show(this, browser_, space_idx);
-+      return true;
++      if (space_idx >= 0 && space_idx <= 2) {
++        VeloxSpaceTabPreviewBubble::ClosePreview();
++        VeloxRenameSpaceBubble::Show(this, browser_, space_idx);
++        return true;
++      }
 +    }
 +
 +    // Right-click opens context menu with Rename, Move Tab, Switch, Reset
 +    if (event.IsOnlyRightMouseButton()) {
-+      ShowContextMenuForSpace(space_idx, event.location());
-+      return true;
++      if (space_idx >= 0 && space_idx <= 2) {
++        VeloxSpaceTabPreviewBubble::ClosePreview();
++        ShowContextMenuForSpace(space_idx, event.location());
++        return true;
++      }
 +    }
 +
 +    // Middle-click instantly moves current tab to this space
 +    if (event.IsMiddleMouseButton()) {
-+      velox::MoveActiveTabToWorkspace(browser_, space_idx);
-+      return true;
++      if (space_idx >= 0 && space_idx <= 2) {
++        velox::MoveActiveTabToWorkspace(browser_, space_idx);
++        return true;
++      }
 +    }
 +
-+    // Left-click switches workspace
++    // Left-click switches workspace or toggles morphing expansion
 +    if (event.IsOnlyLeftMouseButton()) {
-+      velox::SwitchWorkspace(browser_, space_idx);
-+      return true;
++      VeloxSpaceTabPreviewBubble::ClosePreview();
++      if (!is_expanded_ && !morph_animation_.is_animating()) {
++        Expand();
++        return true;
++      }
++
++      // In expanded mode:
++      if (space_idx == -2) {
++        Collapse();
++        return true;
++      }
++
++      if (space_idx >= 0 && space_idx <= 2) {
++        if (space_idx == GetActiveSpace()) {
++          Collapse();
++        } else {
++          velox::SwitchWorkspace(browser_, space_idx);
++          Collapse();
++        }
++        return true;
++      }
 +    }
 +    return false;
 +  }
 +
 +  void OnMouseMoved(const ui::MouseEvent& event) override {
-+    int h = HitSpaceIndex(event.x());
-+    if (h != hovered_space_) {
-+      hovered_space_ = h;
++    int hit = HitSpaceIndex(event.x());
++    if (hit != hovered_space_) {
++      hovered_space_ = hit;
 +      SchedulePaint();
++    }
++
++    if (hit >= 0 && hit <= 2) {
++      hover_timer_.Stop();
++      hover_timer_.Start(
++          FROM_HERE, base::Milliseconds(140),
++          base::BindOnce(&VeloxSpacesControl::ShowHoverPreview,
++                         base::Unretained(this), hit));
++    } else {
++      hover_timer_.Stop();
++      preview_close_timer_.Start(
++          FROM_HERE, base::Milliseconds(200),
++          base::BindOnce(&VeloxSpacesControl::CheckDismissPreview,
++                         base::Unretained(this)));
 +    }
 +  }
 +
 +  void OnMouseExited(const ui::MouseEvent& event) override {
++    hover_timer_.Stop();
 +    if (hovered_space_ != -1) {
 +      hovered_space_ = -1;
 +      SchedulePaint();
 +    }
++
++    preview_close_timer_.Start(
++        FROM_HERE, base::Milliseconds(250),
++        base::BindOnce(&VeloxSpacesControl::CheckDismissPreview,
++                       base::Unretained(this)));
++
++    if (is_expanded_) {
++      auto_collapse_timer_.Start(
++          FROM_HERE, base::Milliseconds(3500),
++          base::BindOnce(&VeloxSpacesControl::Collapse,
++                         base::Unretained(this)));
++    }
++  }
++
++  void ShowHoverPreview(int space_idx) {
++    if (space_idx >= 0 && space_idx <= 2) {
++      VeloxSpaceTabPreviewBubble::Show(this, browser_, space_idx);
++    }
++  }
++
++  void CheckDismissPreview() {
++    auto& st = GetVeloxState();
++    if (!st.active_preview_bubble_widget) {
++      return;
++    }
++    gfx::Point cursor = display::Screen::GetScreen()->GetCursorScreenPoint();
++    gfx::Rect my_bounds = GetBoundsInScreen();
++    if (my_bounds.Contains(cursor)) {
++      return;
++    }
++    gfx::Rect bubble_bounds =
++        st.active_preview_bubble_widget->GetWindowBoundsInScreen();
++    if (bubble_bounds.Contains(cursor)) {
++      preview_close_timer_.Start(
++          FROM_HERE, base::Milliseconds(250),
++          base::BindOnce(&VeloxSpacesControl::CheckDismissPreview,
++                         base::Unretained(this)));
++      return;
++    }
++    VeloxSpaceTabPreviewBubble::ClosePreview();
 +  }
 +
 +  void OnPaint(gfx::Canvas* canvas) override {
@@ -7487,13 +8002,57 @@ index 27efd0c423..1b59b9ea76 100644
 +    outer_border.setColor(SkColorSetARGB(35, 255, 255, 255));
 +    canvas->sk_canvas()->drawRRect(outer_rr, outer_border);
 +
-+    canvas->sk_canvas()->restore();  // Back to DIPs for segment layout & text
++    canvas->sk_canvas()->restore();  // Back to DIPs
 +
 +    const int active = GetActiveSpace();
++    const double progress = morph_animation_.GetCurrentValue();
++    const std::u16string kIcons[3] = {u"◈", u"💼", u"🎯"};
 +
++    // 1. COLLAPSED VIEW (when progress is close to 0)
++    if (!is_expanded_ && progress <= 0.05) {
++      gfx::Rect seg_rect(3, 3, width() - 6, height() - 6);
++
++      gfx::ScopedCanvas seg_scoped(canvas);
++      const float s = canvas->UndoDeviceScaleFactor();
++      gfx::RectF sf(seg_rect);
++      sf.Scale(s);
++      SkRRect srr;
++      srr.setRectXY(gfx::RectFToSkRect(sf), sf.height() / 2.0f, sf.height() / 2.0f);
++
++      cc::PaintFlags seg_fill;
++      seg_fill.setAntiAlias(true);
++      seg_fill.setStyle(cc::PaintFlags::kFill_Style);
++      seg_fill.setColor(hovered_space_ != -1 ? SkColorSetARGB(75, 59, 130, 246)
++                                             : SkColorSetARGB(50, 59, 130, 246));
++      canvas->sk_canvas()->drawRRect(srr, seg_fill);
++
++      cc::PaintFlags seg_rim;
++      seg_rim.setAntiAlias(true);
++      seg_rim.setStyle(cc::PaintFlags::kStroke_Style);
++      seg_rim.setStrokeWidth(1.2f * s);
++      seg_rim.setColor(SkColorSetARGB(180, 59, 130, 246));
++      canvas->sk_canvas()->drawRRect(srr, seg_rim);
++
++      canvas->sk_canvas()->restore();
++
++      std::u16string icon = (active >= 0 && active < 3 ? kIcons[active] : u"◈");
++      std::u16string label = icon + u" " + base::NumberToString16(active + 1) + u" " +
++                             velox::GetSpaceName(active) + u"  ▾";
++      canvas->DrawStringRectWithFlags(
++          label,
++          gfx::FontList().Derive(0, gfx::Font::NORMAL, gfx::Font::Weight::BOLD),
++          SK_ColorWHITE, seg_rect,
++          gfx::Canvas::TEXT_ALIGN_CENTER | gfx::Canvas::NO_SUBPIXEL_RENDERING);
++      return;
++    }
++
++    // 2. EXPANDED OR MORPHING VIEW
 +    int cur_x = 3;
 +    for (int i = 0; i < 3; ++i) {
 +      int seg_w = GetSegmentWidth(i, active);
++      if (cur_x + seg_w > width() - 2) {
++        break;
++      }
 +      gfx::Rect seg_rect(cur_x, 3, seg_w, height() - 6);
 +
 +      if (i == active || i == hovered_space_) {
@@ -7502,8 +8061,7 @@ index 27efd0c423..1b59b9ea76 100644
 +        gfx::RectF sf(seg_rect);
 +        sf.Scale(s);
 +        SkRRect srr;
-+        srr.setRectXY(gfx::RectFToSkRect(sf), sf.height() / 2.0f,
-+                      sf.height() / 2.0f);
++        srr.setRectXY(gfx::RectFToSkRect(sf), sf.height() / 2.0f, sf.height() / 2.0f);
 +
 +        cc::PaintFlags seg_fill;
 +        seg_fill.setAntiAlias(true);
@@ -7511,7 +8069,7 @@ index 27efd0c423..1b59b9ea76 100644
 +        if (i == active) {
 +          seg_fill.setColor(SkColorSetARGB(55, 59, 130, 246));
 +        } else {
-+          seg_fill.setColor(SkColorSetARGB(25, 255, 255, 255));
++          seg_fill.setColor(SkColorSetARGB(30, 255, 255, 255));
 +        }
 +        canvas->sk_canvas()->drawRRect(srr, seg_fill);
 +
@@ -7530,10 +8088,11 @@ index 27efd0c423..1b59b9ea76 100644
 +                             : (i == hovered_space_
 +                                    ? SkColorSetRGB(226, 232, 240)
 +                                    : SkColorSetRGB(148, 163, 184));
++      std::u16string icon = (i >= 0 && i < 3 ? kIcons[i] : u"◈");
 +      std::u16string label =
 +          (i == active)
-+              ? (base::NumberToString16(i + 1) + u" " + velox::GetSpaceName(i))
-+              : base::NumberToString16(i + 1);
++              ? (icon + u" " + base::NumberToString16(i + 1) + u" " + velox::GetSpaceName(i))
++              : (icon + u" " + base::NumberToString16(i + 1));
 +      canvas->DrawStringRectWithFlags(
 +          label,
 +          gfx::FontList().Derive(
@@ -7543,7 +8102,30 @@ index 27efd0c423..1b59b9ea76 100644
 +          text_col, seg_rect,
 +          gfx::Canvas::TEXT_ALIGN_CENTER | gfx::Canvas::NO_SUBPIXEL_RENDERING);
 +
-+      cur_x += seg_w + 1;
++      cur_x += seg_w + 2;
++    }
++
++    // Collapse chevron '◂' at the end
++    if (cur_x < width() - 8) {
++      gfx::Rect collapse_rect(cur_x, 3, width() - cur_x - 3, height() - 6);
++      if (hovered_space_ == -2) {
++        gfx::ScopedCanvas col_scoped(canvas);
++        const float s = canvas->UndoDeviceScaleFactor();
++        gfx::RectF cf(collapse_rect);
++        cf.Scale(s);
++        SkRRect crr;
++        crr.setRectXY(gfx::RectFToSkRect(cf), cf.height() / 2.0f, cf.height() / 2.0f);
++        cc::PaintFlags col_fill;
++        col_fill.setAntiAlias(true);
++        col_fill.setColor(SkColorSetARGB(35, 255, 255, 255));
++        canvas->sk_canvas()->drawRRect(crr, col_fill);
++      }
++      canvas->DrawStringRectWithFlags(
++          u"◂",
++          gfx::FontList().Derive(0, gfx::Font::NORMAL, gfx::Font::Weight::BOLD),
++          (hovered_space_ == -2) ? SK_ColorWHITE : SkColorSetRGB(148, 163, 184),
++          collapse_rect,
++          gfx::Canvas::TEXT_ALIGN_CENTER | gfx::Canvas::NO_SUBPIXEL_RENDERING);
 +    }
 +  }
 +
@@ -7598,6 +8180,13 @@ index 27efd0c423..1b59b9ea76 100644
 +  raw_ptr<Browser> browser_ = nullptr;
 +  int hovered_space_ = -1;
 +  int context_space_idx_ = 0;
++  bool is_expanded_ = false;
++
++  gfx::SlideAnimation morph_animation_;
++  base::OneShotTimer hover_timer_;
++  base::OneShotTimer preview_close_timer_;
++  base::OneShotTimer auto_collapse_timer_;
++
 +  std::unique_ptr<ui::SimpleMenuModel> menu_model_;
 +  std::unique_ptr<views::MenuRunner> menu_runner_;
 +};
@@ -7616,7 +8205,7 @@ index 27efd0c423..1b59b9ea76 100644
  class ToolbarView::ContainerView : public views::View {
    METADATA_HEADER(ContainerView, views::View)
  
-@@ -255,6 +2249,7 @@ ToolbarView::~ToolbarView() {
+@@ -255,6 +2838,7 @@ ToolbarView::~ToolbarView() {
    }
  
    overflow_button_->set_toolbar_controller(nullptr);
@@ -7624,7 +8213,7 @@ index 27efd0c423..1b59b9ea76 100644
  
    for (const auto& view_and_command : GetViewCommandMap()) {
      chrome::RemoveCommandObserver(browser_, view_and_command.second, this);
-@@ -399,6 +2394,10 @@ void ToolbarView::Init() {
+@@ -399,6 +2983,10 @@ void ToolbarView::Init() {
    reload_ = container_view_->AddChildView(std::move(reload));
    home_ = container_view_->AddChildView(std::move(home));
  
@@ -7635,7 +8224,7 @@ index 27efd0c423..1b59b9ea76 100644
    location_bar_ = container_view_->AddChildView(std::move(location_bar));
  
    if (extensions_container) {
-@@ -513,6 +2512,12 @@ void ToolbarView::Init() {
+@@ -513,6 +3101,12 @@ void ToolbarView::Init() {
    new_tab_button_ = container_view_->AddChildView(std::move(new_tab_button));
  #endif  // BUILDFLAG(ENABLE_WEBUI_TAB_STRIP)
  
@@ -7648,7 +8237,7 @@ index 27efd0c423..1b59b9ea76 100644
    overflow_button_ =
        container_view_->AddChildView(std::make_unique<OverflowButton>());
    overflow_button_->SetVisible(false);
-@@ -1117,6 +3122,15 @@ void ToolbarView::UpdateTypeAndSeverity(
+@@ -1117,6 +3711,15 @@ void ToolbarView::UpdateTypeAndSeverity(
    }
    app_menu_button_->GetViewAccessibility().SetName(accname_app);
    app_menu_button_->SetTypeAndSeverity(type_and_severity);
