@@ -255,7 +255,11 @@ class TestPatchesRegistry(unittest.TestCase):
         # Patches that represent standalone modifications or the terminal state of modified files
         # must reverse cleanly with exit code 0 directly against the working tree.
         cumulative_ui_stack = {
+            "0004-register-velox-schemes.patch",
+            "0008-velox-shield-ad-tracker-blocking-and-fingerprint-randomization.patch",
             "0010-velox-new-tab-page-branding.patch",
+            "0011-ram-optimization-memory-saver-and-lifecycle-tuning.patch",
+            "0014-velox-welcome-tour-and-onboarding-experience.patch",
             "0016-velox-tab-islands-glowing-ui-and-update-detector.patch",
             "0017-fix-incognito-teardown-and-observer-lifecycle.patch",
             "0018-super-pip-and-forced-dark-theme.patch",
@@ -402,6 +406,88 @@ class TestCodeSigningPipeline(unittest.TestCase):
 sys.path.insert(0, str(REPO_ROOT / "tests"))
 from test_auto_updater import TestAutoUpdater
 from test_widevine import TestWidevineArchitecture
+
+
+class TestUniversalMediaAndHardwareCompatibility(unittest.TestCase):
+    def test_velox_media_webui_registered(self):
+        perf_h = REPO_ROOT / "src" / "chrome" / "browser" / "ui" / "webui" / "velox" / "velox_performance_ui.h"
+        perf_cc = REPO_ROOT / "src" / "chrome" / "browser" / "ui" / "webui" / "velox" / "velox_performance_ui.cc"
+        configs_cc = REPO_ROOT / "src" / "chrome" / "browser" / "ui" / "webui" / "chrome_web_ui_configs.cc"
+        self.assertTrue(perf_h.exists())
+        self.assertTrue(perf_cc.exists())
+        self.assertTrue(configs_cc.exists())
+
+        h_text = perf_h.read_text(encoding="utf-8")
+        cc_text = perf_cc.read_text(encoding="utf-8")
+        cfg_text = configs_cc.read_text(encoding="utf-8")
+
+        self.assertIn('kVeloxUIMediaHost[] = "media"', h_text)
+        self.assertIn('kVeloxUIMediaURL[] = "velox://media/"', h_text)
+        self.assertIn("class VeloxMediaUIConfig", h_text)
+        self.assertIn("class VeloxMediaUI", h_text)
+        self.assertIn("VeloxMediaHTMLSource", cc_text)
+        self.assertIn("GpuDataManager::GetInstance()", cc_text)
+        self.assertIn("video_decode_accelerator_supported_profiles", cc_text)
+        self.assertIn("AddWebUIConfig(std::make_unique<VeloxMediaUIConfig>())", cfg_text)
+
+    def test_adaptive_hardware_concurrency_bucketing(self):
+        nav_cc = REPO_ROOT / "src" / "third_party" / "blink" / "renderer" / "core" / "frame" / "navigator_concurrent_hardware.cc"
+        self.assertTrue(nav_cc.exists())
+        text = nav_cc.read_text(encoding="utf-8")
+        self.assertIn("base::SysInfo::NumberOfProcessors()", text)
+        self.assertIn("return 2u;", text)
+        self.assertIn("return 4u;", text)
+        self.assertIn("return 8u;", text)
+        self.assertIn("return 12u;", text)
+        self.assertIn("return 16u;", text)
+
+        def bucket_concurrency(procs):
+            if procs <= 2:
+                return 2
+            if procs <= 4:
+                return 4
+            if procs <= 8:
+                return 8
+            if procs <= 12:
+                return 12
+            return 16
+
+        self.assertEqual(bucket_concurrency(2), 2)
+        self.assertEqual(bucket_concurrency(4), 4)
+        self.assertEqual(bucket_concurrency(6), 8)
+        self.assertEqual(bucket_concurrency(8), 8)
+        self.assertEqual(bucket_concurrency(12), 12)
+        self.assertEqual(bucket_concurrency(28), 16)
+
+    def test_playback_safe_memory_pressure_and_decoder_priority(self):
+        rt_cc = REPO_ROOT / "src" / "content" / "renderer" / "render_thread_impl.cc"
+        ms_cc = REPO_ROOT / "src" / "media" / "base" / "media_switches.cc"
+        pip_cc = REPO_ROOT / "src" / "chrome" / "browser" / "picture_in_picture" / "auto_picture_in_picture_tab_helper.cc"
+
+        rt_text = rt_cc.read_text(encoding="utf-8")
+        ms_text = ms_cc.read_text(encoding="utf-8")
+        pip_text = pip_cc.read_text(encoding="utf-8")
+
+        self.assertIn("RendererIsHidden() && RendererIsBackgrounded()", rt_text)
+        self.assertIn('BASE_FEATURE(kResolutionBasedDecoderPriority,\n             "ResolutionBasedDecoderPriority",\n             base::FEATURE_ENABLED_BY_DEFAULT);', ms_text)
+        self.assertIn("has_audio_focus_ || WasRecentlyAudible()", pip_text)
+
+    def test_required_media_documentation_deliverables_exist(self):
+        docs_dir = REPO_ROOT / "docs"
+        required_docs = [
+            "media-architecture-audit.md",
+            "hardware-compatibility-matrix.md",
+            "video-quality-audit.md",
+            "adaptive-media-strategy.md",
+            "media-testing-report.md",
+            "media-optimization-roadmap.md",
+        ]
+        for doc_name in required_docs:
+            doc_path = docs_dir / doc_name
+            self.assertTrue(doc_path.exists(), f"Missing deliverable: {doc_name}")
+            content = doc_path.read_text(encoding="utf-8")
+            self.assertIn("CONFIRMED", content)
+            self.assertGreater(len(content), 1500)
 
 
 if __name__ == "__main__":

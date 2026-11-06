@@ -13,7 +13,11 @@ import argparse
 from pathlib import Path
 
 CUMULATIVE_UI_PATCHES = {
+    "0004-register-velox-schemes.patch",
+    "0008-velox-shield-ad-tracker-blocking-and-fingerprint-randomization.patch",
     "0010-velox-new-tab-page-branding.patch",
+    "0011-ram-optimization-memory-saver-and-lifecycle-tuning.patch",
+    "0014-velox-welcome-tour-and-onboarding-experience.patch",
     "0016-velox-tab-islands-glowing-ui-and-update-detector.patch",
     "0017-fix-incognito-teardown-and-observer-lifecycle.patch",
     "0018-super-pip-and-forced-dark-theme.patch",

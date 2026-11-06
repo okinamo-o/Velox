@@ -202,6 +202,25 @@ patches/
 - **Security Implication**: WebUI controller enforces strict child process security isolation; unprivileged web origins cannot request or iframe `velox://welcome`.
 - **Verification State**: **`VERIFIED`**. Validated live via CDP automation on fresh profile (`test_fre_profile`); confirmed automatic tab navigation and DOM rendering with 0 crashes. Reverse apply verified cleanly.
 
+### Patch 0024: Universal Video Playback, Adaptive Hardware Concurrency & `velox://media` Diagnostics
+- **Files touched**:
+  - `content/renderer/render_thread_impl.cc`
+  - `third_party/blink/renderer/core/frame/navigator_concurrent_hardware.cc`
+  - `media/base/media_switches.cc`
+  - `chrome/browser/picture_in_picture/auto_picture_in_picture_tab_helper.cc`
+  - `chrome/browser/ui/webui/velox/velox_performance_ui.h`
+  - `chrome/browser/ui/webui/velox/velox_performance_ui.cc`
+  - `chrome/browser/ui/webui/chrome_web_ui_configs.cc`
+- **Reason**: Remediate video playback stutter under moderate memory pressure, prevent CPU thread oversubscription on low-end CPUs while scaling 4K60 worker pools on high-end CPUs, prioritize hardware decoding (`D3D11VideoDecoder`) for $\ge 360\text{p}$ streams while routing tiny $<360\text{p}$ thumbnail videos to lightweight software decoding, prevent silent decorative `<video>` loops from hijacking Auto-PiP, and provide product-level runtime media/hardware diagnostics at `velox://media`.
+- **Behavior Change**:
+  - Restricts `SkGraphics::PurgeAllCaches()` and `WebMemoryPressureListener::OnPurgeMemory()` on `MEMORY_PRESSURE_LEVEL_MODERATE` to hidden and backgrounded renderers (`RendererIsHidden() && RendererIsBackgrounded()`), protecting active/audible video renderers from mid-playback cache purge frame drops.
+  - Buckets `navigator.hardwareConcurrency` dynamically via `base::SysInfo::NumberOfProcessors()` into standard tiers `{2, 4, 8, 12, 16}`.
+  - Enables `media::kResolutionBasedDecoderPriority` by default on Windows desktop.
+  - Updates `AutoPictureInPictureTabHelper::MeetsVideoPlaybackConditions()` to require `has_audio_focus_ || WasRecentlyAudible() || is_enter_auto_picture_in_picture_available_`.
+  - Registers `velox://media` (`VeloxMediaUI` / `VeloxMediaUIConfig`) reporting real runtime GPU/driver/DXVA profile/DirectComposition overlay/CPU/display capabilities, live `MediaCapabilities` & EME probes, an interactive 720p60 playback inspector, and local JSON export.
+- **Security Implication**: Preserves full renderer/GPU sandboxing, Site Isolation, and WebUI `script-src 'self'` Content Security Policy (`velox://media/media.js`); zero external telemetry.
+- **Verification State**: **`VERIFIED`**. Confirmed compilation, clean reverse apply, and automated test verification.
+
 ---
 
 ## 3. Patch Application & Validation Script
