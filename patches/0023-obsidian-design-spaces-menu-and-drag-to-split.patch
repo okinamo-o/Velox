@@ -5595,7 +5595,7 @@ index 13203a5559..e2dc26a413 100644
  
  float TabStyleViewsImpl::GetTopCornerRadiusForWidth(int width) const {
 diff --git a/chrome/browser/ui/views/toolbar/toolbar_view.cc b/chrome/browser/ui/views/toolbar/toolbar_view.cc
-index 27efd0c423..276545e2c6 100644
+index 27efd0c423..a36873955c 100644
 --- a/chrome/browser/ui/views/toolbar/toolbar_view.cc
 +++ b/chrome/browser/ui/views/toolbar/toolbar_view.cc
 @@ -17,20 +17,26 @@
@@ -5678,7 +5678,7 @@ index 27efd0c423..276545e2c6 100644
  #include "ui/views/widget/tooltip_manager.h"
  #include "ui/views/widget/widget.h"
  #include "ui/views/window/non_client_view.h"
-@@ -199,8 +240,2709 @@ class TabstripLikeBackground : public views::Background {
+@@ -199,8 +240,2770 @@ class TabstripLikeBackground : public views::Background {
    const raw_ptr<BrowserView> browser_view_;
  };
  
@@ -6903,6 +6903,59 @@ index 27efd0c423..276545e2c6 100644
 +  ScheduleSaveTabSpaces();
 +}
 +
++void MoveTabsToEndOfWorkspace(TabStrip* tab_strip,
++                             TabStripModel* model,
++                             const std::vector<Tab*>& moving_tabs,
++                             int target_workspace) {
++  if (!tab_strip || !model || moving_tabs.empty()) {
++    return;
++  }
++
++  for (Tab* moving_tab : moving_tabs) {
++    if (!moving_tab || moving_tab->closing()) {
++      continue;
++    }
++    auto opt_current_idx = tab_strip->GetModelIndexOf(moving_tab);
++    if (!opt_current_idx.has_value()) {
++      continue;
++    }
++    int current_idx = opt_current_idx.value();
++    const bool is_pinned = moving_tab->data().pinned;
++
++    int last_target_idx = -1;
++    for (int i = model->count() - 1; i >= 0; --i) {
++      if (i == current_idx) {
++        continue;
++      }
++      Tab* t = SafeGetTab(tab_strip, i);
++      if (t && !t->closing() && GetTabWorkspace(t) == target_workspace &&
++          t->data().pinned == is_pinned) {
++        last_target_idx = i;
++        break;
++      }
++    }
++
++    int to_idx = -1;
++    if (last_target_idx != -1) {
++      if (current_idx < last_target_idx) {
++        to_idx = last_target_idx;
++      } else {
++        to_idx = last_target_idx + 1;
++      }
++    } else {
++      if (is_pinned) {
++        to_idx = std::max(0, model->IndexOfFirstNonPinnedTab() - 1);
++      } else {
++        to_idx = model->count() - 1;
++      }
++    }
++
++    if (to_idx >= 0 && to_idx < model->count() && to_idx != current_idx) {
++      model->MoveWebContentsAt(current_idx, to_idx, /*select_after_move=*/false);
++    }
++  }
++}
++
 +void MoveActiveTabToWorkspace(Browser* browser, int workspace_id) {
 +  if (!browser || workspace_id < 0 || workspace_id >= velox::GetSpaceCount()) {
 +    return;
@@ -6915,6 +6968,7 @@ index 27efd0c423..276545e2c6 100644
 +  TabStripModel* model = browser->tab_strip_model();
 +  int active_idx = model->active_index();
 +  if (active_idx >= 0 && active_idx < tab_strip->GetTabCount()) {
++    std::vector<Tab*> moving_tabs;
 +    int partner_idx = model->GetSplitPartnerIndex(active_idx);
 +    if (partner_idx != TabStripModel::kNoTab &&
 +        partner_idx < tab_strip->GetTabCount()) {
@@ -6923,6 +6977,7 @@ index 27efd0c423..276545e2c6 100644
 +        RemoveTabFromWorkspaceStack(tab_strip, old_partner_ws, partner_tab);
 +        GetVeloxState().tab_workspaces[partner_tab] = workspace_id;
 +        RecordActiveTabInWorkspace(tab_strip, workspace_id, partner_tab);
++        moving_tabs.push_back(partner_tab);
 +      }
 +    }
 +    Tab* active_tab = SafeGetTab(tab_strip, active_idx);
@@ -6939,7 +6994,9 @@ index 27efd0c423..276545e2c6 100644
 +      auto new_key =
 +          std::make_pair(static_cast<const TabStrip*>(tab_strip), workspace_id);
 +      GetVeloxState().last_active_tab[new_key] = active_tab;
++      moving_tabs.push_back(active_tab);
 +    }
++    MoveTabsToEndOfWorkspace(tab_strip, model, moving_tabs, workspace_id);
 +  }
 +  SwitchWorkspace(browser, workspace_id);
 +  EnsureTabSpacesLoaded(tab_strip);
@@ -7009,6 +7066,7 @@ index 27efd0c423..276545e2c6 100644
 +  int current_active_ws = GetTabStripActiveWorkspace(tab_strip);
 +  bool moved_active_tab = false;
 +
++  std::vector<Tab*> moving_tabs;
 +  for (int idx : all_indices_to_move) {
 +    Tab* tab = SafeGetTab(tab_strip, idx);
 +    if (!tab) {
@@ -7025,10 +7083,13 @@ index 27efd0c423..276545e2c6 100644
 +    }
 +    st.tab_workspaces[tab] = target_workspace;
 +    RecordActiveTabInWorkspace(tab_strip, target_workspace, tab);
++    moving_tabs.push_back(tab);
 +    if (tab->IsActive()) {
 +      moved_active_tab = true;
 +    }
 +  }
++
++  MoveTabsToEndOfWorkspace(tab_strip, model, moving_tabs, target_workspace);
 +
 +  // If the active tab was moved out of the current workspace,
 +  // activate another tab remaining in the current workspace.
@@ -8388,7 +8449,7 @@ index 27efd0c423..276545e2c6 100644
  class ToolbarView::ContainerView : public views::View {
    METADATA_HEADER(ContainerView, views::View)
  
-@@ -255,6 +2997,7 @@ ToolbarView::~ToolbarView() {
+@@ -255,6 +3058,7 @@ ToolbarView::~ToolbarView() {
    }
  
    overflow_button_->set_toolbar_controller(nullptr);
@@ -8396,7 +8457,7 @@ index 27efd0c423..276545e2c6 100644
  
    for (const auto& view_and_command : GetViewCommandMap()) {
      chrome::RemoveCommandObserver(browser_, view_and_command.second, this);
-@@ -399,6 +3142,10 @@ void ToolbarView::Init() {
+@@ -399,6 +3203,10 @@ void ToolbarView::Init() {
    reload_ = container_view_->AddChildView(std::move(reload));
    home_ = container_view_->AddChildView(std::move(home));
  
@@ -8407,7 +8468,7 @@ index 27efd0c423..276545e2c6 100644
    location_bar_ = container_view_->AddChildView(std::move(location_bar));
  
    if (extensions_container) {
-@@ -513,6 +3260,12 @@ void ToolbarView::Init() {
+@@ -513,6 +3321,12 @@ void ToolbarView::Init() {
    new_tab_button_ = container_view_->AddChildView(std::move(new_tab_button));
  #endif  // BUILDFLAG(ENABLE_WEBUI_TAB_STRIP)
  
@@ -8420,7 +8481,7 @@ index 27efd0c423..276545e2c6 100644
    overflow_button_ =
        container_view_->AddChildView(std::make_unique<OverflowButton>());
    overflow_button_->SetVisible(false);
-@@ -1117,6 +3870,15 @@ void ToolbarView::UpdateTypeAndSeverity(
+@@ -1117,6 +3931,15 @@ void ToolbarView::UpdateTypeAndSeverity(
    }
    app_menu_button_->GetViewAccessibility().SetName(accname_app);
    app_menu_button_->SetTypeAndSeverity(type_and_severity);
