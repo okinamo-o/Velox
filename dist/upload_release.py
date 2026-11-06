@@ -27,17 +27,17 @@ def main():
     # 1. Create or get existing release
     version = sys.argv[1] if len(sys.argv) > 1 else "134.0.6998.186"
     tag = f"v{version}"
-    name = f"Velox Browser v{version} (Cyber-Glass Menu, Single Update Pill & SxS Stability)"
+    name = f"Velox Browser v{version} (Universal Media Engine, Morphing Spaces & Diagnostics)"
     body = (
         f"## Velox Browser v{version}\n\n"
         f"### 🌟 What's New in v{version}\n"
-        "- **✨ Single Clean Update Pill**: Eliminated duplicate update buttons in the toolbar by keeping the 3-dots app menu clean and unexpanded (`⋮`), making the cyber-glass `✦ Update Velox •` button the sole dedicated update indicator.\n"
-        "- **🔮 Cyber-Glass Tab Context Menu**: Completely redesigned native right-click tab menu featuring a deep midnight cyber-glass background (`#0B1324` to `#060A14`), glowing cyan-to-violet gradient borders (`#00F0FF` $\\rightarrow$ `#A855F7`), floating rounded hover pills with electric cyan accent bars, keycap-styled keyboard shortcut badges, horizontal gradient dividers, and crisp action icons.\n"
-        "- **🏝️ NTP Tab Islands Live Previews**: New Tab Page Tab Groups section redesigned into modern Tab Islands with live preview capsules showing real open tab titles, site favicons, and tab counts.\n"
-        "- **🔗 Accurate Most Used Links**: Replaced placeholder shortcuts with real browsing history most-visited sites powered by `HistoryService`, with TopSites domain deduplication and open tab fallbacks.\n"
-        "- **⚡ Flicker-Free Split Screen**: Redesigned split-screen view architecture with fixed pane slots and stable native view attachment for instantaneous, flicker-free multitasking.\n"
-        "- **🌌 Customizable Spaces (Workspaces)**: Effortlessly organize tabs into isolated workflows (e.g. Work, Gaming, Personal, Dev, Study). Switch instantly with hotkeys (`Ctrl+1/2/3`) or the toolbar pill. Inactive space tabs are automatically frozen to consume 0 KB wasted RAM.\n"
-        "- **📝 New Tab Scratchpad & Focus Dashboard**: `chrome://newtab` command center with persistent quick scratchpad, focus session timer, and real-time shield & RAM statistics.\n"
+        "- **🎬 Universal Video Playback & Adaptive Decoders**: Full D3D11/DXVA hardware acceleration for 1080p, 1440p, 4K60, and HDR video streams. Enabled resolution-based decoder priority (>=360p HW / <360p SW) to optimize GPU context switches.\n"
+        "- **🛡️ Playback-Safe Memory Protection**: Protected active video renderers from mid-playback Skia/Blink cache purges during moderate system memory pressure on 8GB-16GB PCs, eliminating stutter and ABR quality drops.\n"
+        "- **⚡ Adaptive Hardware Concurrency**: Dynamic processor tiering ({2, 4, 8, 12, 16}) prevents low-end CPUs from being oversubscribed by media/WASM workers while scaling up to 16 threads on high-end CPUs.\n"
+        "- **📊 Native Media Diagnostics (`velox://media`)**: Interactive privileged WebUI reporting GPU/driver telemetry, DXVA profiles, DirectComposition overlays, live MediaCapabilities probes, frame drop statistics, and local diagnostics export.\n"
+        "- **🌌 Morphing Spaces Switcher & Tab Previews**: Assembles spaces into a single morphing toolbar button with cubic slide animation, interactive tab hover preview cards, '+' dynamic space creation, and end-of-space tab placement.\n"
+        "- **🏝️ Pinned & Top Sites Weekly History**: Shows the week's most-used sites powered by `HistoryService` and domain deduplication, with clean Deep Obsidian styling.\n"
+        "- **🔮 Cyber-Glass Tab Context Menu**: Redesigned native menu with glowing cyan-to-violet borders, floating pills, keycap shortcut badges, and crisp action icons.\n"
         "- **🛡️ Built-in Velox Shield**: Native intelligent tracker and ad blocking with zero extra resource overhead.\n"
         "- **🔔 Cryptographically Signed Auto-Updates**: In-browser auto-update detector backed by pinned RSA-2048 PKCS#1 SHA-256 release manifest signatures.\n\n"
         "### 📦 Downloads & Verification\n"
@@ -59,6 +59,26 @@ def main():
         else:
             print(f"Error checking release: {e.code} {e.read().decode()}")
             sys.exit(1)
+
+    if release:
+        update_payload = {
+            'tag_name': tag,
+            'target_commitish': 'main',
+            'name': name,
+            'body': body
+        }
+        patch_req = urllib.request.Request(
+            f"https://api.github.com/repos/okinamo-o/Velox/releases/{release.get('id')}",
+            data=json.dumps(update_payload).encode('utf-8'),
+            headers={**headers, 'Content-Type': 'application/json'},
+            method='PATCH'
+        )
+        try:
+            with urllib.request.urlopen(patch_req) as resp:
+                release = json.loads(resp.read().decode())
+                print(f"Updated existing release {release.get('id')} metadata & notes.")
+        except urllib.error.HTTPError as e:
+            print(f"Warning: Failed to update release metadata: {e.code}")
 
     if not release:
         payload = {
