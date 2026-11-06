@@ -2641,7 +2641,7 @@ index 6e26141616..0d84394cfd 100644
      <ntp-app></ntp-app>
      <script type="module" src="new_tab_page.js"></script>
 diff --git a/chrome/browser/ui/tabs/tab_menu_model.cc b/chrome/browser/ui/tabs/tab_menu_model.cc
-index 6ddf329734..fc47b1ffcb 100644
+index 6ddf329734..bc1fc8b344 100644
 --- a/chrome/browser/ui/tabs/tab_menu_model.cc
 +++ b/chrome/browser/ui/tabs/tab_menu_model.cc
 @@ -8,6 +8,7 @@
@@ -2652,7 +2652,7 @@ index 6ddf329734..fc47b1ffcb 100644
  #include "build/build_config.h"
  #include "chrome/app/vector_icons/vector_icons.h"
  #include "chrome/browser/commerce/browser_utils.h"
-@@ -33,7 +34,66 @@
+@@ -33,7 +34,90 @@
  #include "components/commerce/core/commerce_feature_list.h"
  #include "components/feed/feed_feature_list.h"
  #include "components/reading_list/features/reading_list_switches.h"
@@ -2664,7 +2664,9 @@ index 6ddf329734..fc47b1ffcb 100644
 +namespace velox {
 +int GetTabWorkspaceAtIndex(TabStripModel* model, int tab_index);
 +void MoveTabAtIndexToWorkspace(TabStripModel* model, int tab_index, int target_workspace);
++int GetSpaceCount();
 +const std::u16string& GetSpaceName(int index);
++int CreateNewSpace(Profile* profile, const std::u16string& optional_name = u"");
 +}  // namespace velox
 +
 +namespace {
@@ -2673,6 +2675,7 @@ index 6ddf329734..fc47b1ffcb 100644
 +                                public ui::SimpleMenuModel::Delegate {
 + public:
 +  static constexpr int kMinSpacesCommandId = 3200;
++  static constexpr int kCreateNewSpaceCommandId = 3250;
 +
 +  VeloxSpacesSubMenuModel(TabStripModel* tab_strip, int context_index)
 +      : ui::SimpleMenuModel(this),
@@ -2682,16 +2685,32 @@ index 6ddf329734..fc47b1ffcb 100644
 +  }
 +
 +  bool IsCommandIdChecked(int command_id) const override {
++    if (command_id == kCreateNewSpaceCommandId) {
++      return false;
++    }
 +    int ws = command_id - kMinSpacesCommandId;
 +    return ws == velox::GetTabWorkspaceAtIndex(tab_strip_, context_index_);
 +  }
 +
 +  bool IsCommandIdEnabled(int command_id) const override {
++    if (command_id == kCreateNewSpaceCommandId) {
++      return velox::GetSpaceCount() < 9;
++    }
 +    int ws = command_id - kMinSpacesCommandId;
 +    return ws != velox::GetTabWorkspaceAtIndex(tab_strip_, context_index_);
 +  }
 +
 +  void ExecuteCommand(int command_id, int event_flags) override {
++    if (command_id == kCreateNewSpaceCommandId) {
++      if (tab_strip_) {
++        Profile* profile = tab_strip_->profile();
++        int new_ws = velox::CreateNewSpace(profile);
++        if (new_ws >= 0) {
++          velox::MoveTabAtIndexToWorkspace(tab_strip_, context_index_, new_ws);
++        }
++      }
++      return;
++    }
 +    int target_ws = command_id - kMinSpacesCommandId;
 +    velox::MoveTabAtIndexToWorkspace(tab_strip_, context_index_, target_ws);
 +  }
@@ -2699,7 +2718,8 @@ index 6ddf329734..fc47b1ffcb 100644
 + private:
 +  void Build() {
 +    int current_ws = velox::GetTabWorkspaceAtIndex(tab_strip_, context_index_);
-+    for (int i = 0; i < 3; ++i) {
++    int count = velox::GetSpaceCount();
++    for (int i = 0; i < count; ++i) {
 +      std::u16string name = velox::GetSpaceName(i);
 +      if (name.empty()) {
 +        name = u"Space " + base::NumberToString16(i + 1);
@@ -2708,6 +2728,10 @@ index 6ddf329734..fc47b1ffcb 100644
 +        name += u" (Current)";
 +      }
 +      AddItem(kMinSpacesCommandId + i, name);
++    }
++    if (count < 9) {
++      AddSeparator(ui::MenuSeparatorType::NORMAL_SEPARATOR);
++      AddItem(kCreateNewSpaceCommandId, u"+ Create New Space & Move Tab");
 +    }
 +  }
 +
@@ -2719,7 +2743,7 @@ index 6ddf329734..fc47b1ffcb 100644
  
  using base::UserMetricsAction;
  
-@@ -104,15 +164,23 @@ void TabMenuModel::Build(TabStripModel* tab_strip, int index) {
+@@ -104,15 +188,23 @@ void TabMenuModel::Build(TabStripModel* tab_strip, int index) {
    }
  
    int num_tabs = indices.size();
@@ -2743,7 +2767,7 @@ index 6ddf329734..fc47b1ffcb 100644
    }
    if (ExistingTabGroupSubMenuModel::ShouldShowSubmenu(
            tab_strip, index, tab_menu_model_delegate_)) {
-@@ -124,49 +192,53 @@ void TabMenuModel::Build(TabStripModel* tab_strip, int index) {
+@@ -124,49 +216,53 @@ void TabMenuModel::Build(TabStripModel* tab_strip, int index) {
                 l10n_util::GetPluralStringFUTF16(IDS_TAB_CXMENU_ADD_TAB_TO_GROUP,
                                                  num_tabs),
                 add_to_existing_group_submenu_.get());
@@ -2823,7 +2847,7 @@ index 6ddf329734..fc47b1ffcb 100644
    if (ExistingWindowSubMenuModel::ShouldShowSubmenu(tab_strip->profile())) {
      // Create submenu with existing windows
      add_to_existing_window_submenu_ = ExistingWindowSubMenuModel::Create(
-@@ -175,10 +247,12 @@ void TabMenuModel::Build(TabStripModel* tab_strip, int index) {
+@@ -175,10 +271,12 @@ void TabMenuModel::Build(TabStripModel* tab_strip, int index) {
                 l10n_util::GetPluralStringFUTF16(
                     IDS_TAB_CXMENU_MOVETOANOTHERWINDOW, num_tabs),
                 add_to_existing_window_submenu_.get());
@@ -2836,7 +2860,7 @@ index 6ddf329734..fc47b1ffcb 100644
    }
  
    if (TabOrganizationUtils::GetInstance()->IsEnabled(tab_strip->profile())) {
-@@ -187,26 +261,23 @@ void TabMenuModel::Build(TabStripModel* tab_strip, int index) {
+@@ -187,26 +285,23 @@ void TabMenuModel::Build(TabStripModel* tab_strip, int index) {
      if (tab_organization_service) {
        AddItemWithStringId(TabStripModel::CommandOrganizeTabs,
                            IDS_TAB_CXMENU_ORGANIZE_TABS);
@@ -2867,7 +2891,7 @@ index 6ddf329734..fc47b1ffcb 100644
  
    const bool will_mute = !AreAllSitesMuted(*tab_strip, indices);
    AddItem(TabStripModel::CommandToggleSiteMuted,
-@@ -214,6 +285,8 @@ void TabMenuModel::Build(TabStripModel* tab_strip, int index) {
+@@ -214,6 +309,8 @@ void TabMenuModel::Build(TabStripModel* tab_strip, int index) {
                            IDS_TAB_CXMENU_SOUND_MUTE_SITE, num_tabs)
                      : l10n_util::GetPluralStringFUTF16(
                            IDS_TAB_CXMENU_SOUND_UNMUTE_SITE, num_tabs));
@@ -2876,7 +2900,7 @@ index 6ddf329734..fc47b1ffcb 100644
    if (send_tab_to_self::ShouldDisplayEntryPoint(
            tab_strip->GetWebContentsAt(index))) {
      AddSeparator(ui::NORMAL_SEPARATOR);
-@@ -229,8 +302,10 @@ void TabMenuModel::Build(TabStripModel* tab_strip, int index) {
+@@ -229,8 +326,10 @@ void TabMenuModel::Build(TabStripModel* tab_strip, int index) {
  
    AddSeparator(ui::NORMAL_SEPARATOR);
    AddItemWithStringId(TabStripModel::CommandCloseTab, IDS_TAB_CXMENU_CLOSETAB);
@@ -2887,7 +2911,7 @@ index 6ddf329734..fc47b1ffcb 100644
    {
      AddItemWithStringId(TabStripModel::CommandCloseTabsToRight,
                          base::i18n::IsRTL() ? IDS_TAB_CXMENU_CLOSETABSTOLEFT
-@@ -238,6 +313,7 @@ void TabMenuModel::Build(TabStripModel* tab_strip, int index) {
+@@ -238,6 +337,7 @@ void TabMenuModel::Build(TabStripModel* tab_strip, int index) {
      SetEnabledAt(GetItemCount() - 1,
                   tab_strip->IsContextMenuCommandEnabled(
                       index, TabStripModel::CommandCloseTabsToRight));
@@ -5571,7 +5595,7 @@ index 13203a5559..e2dc26a413 100644
  
  float TabStyleViewsImpl::GetTopCornerRadiusForWidth(int width) const {
 diff --git a/chrome/browser/ui/views/toolbar/toolbar_view.cc b/chrome/browser/ui/views/toolbar/toolbar_view.cc
-index 27efd0c423..c5b4535d8c 100644
+index 27efd0c423..276545e2c6 100644
 --- a/chrome/browser/ui/views/toolbar/toolbar_view.cc
 +++ b/chrome/browser/ui/views/toolbar/toolbar_view.cc
 @@ -17,20 +17,26 @@
@@ -5654,7 +5678,7 @@ index 27efd0c423..c5b4535d8c 100644
  #include "ui/views/widget/tooltip_manager.h"
  #include "ui/views/widget/widget.h"
  #include "ui/views/window/non_client_view.h"
-@@ -199,8 +240,2550 @@ class TabstripLikeBackground : public views::Background {
+@@ -199,8 +240,2709 @@ class TabstripLikeBackground : public views::Background {
    const raw_ptr<BrowserView> browser_view_;
  };
  
@@ -5885,8 +5909,8 @@ index 27efd0c423..c5b4535d8c 100644
 +BEGIN_METADATA(VeloxUpdateBubble)
 +END_METADATA
 +
-+}  // namespace
-+
+ }  // namespace
+ 
 +class VeloxUpdateButton : public views::Button, public UpgradeObserver {
 +  METADATA_HEADER(VeloxUpdateButton, views::Button)
 +
@@ -6095,7 +6119,7 @@ index 27efd0c423..c5b4535d8c 100644
 +  base::FilePath tab_spaces_file;
 +
 +  std::set<VeloxSpacesControl*> spaces_controls;
-+  std::u16string space_names[3] = {u"General", u"Work", u"Focus"};
++  std::vector<std::u16string> space_names = {u"General", u"Work", u"Focus"};
 +  bool space_names_loaded = false;
 +  raw_ptr<views::Widget> active_rename_bubble_widget = nullptr;
 +  raw_ptr<views::Widget> active_preview_bubble_widget = nullptr;
@@ -6111,9 +6135,17 @@ index 27efd0c423..c5b4535d8c 100644
 +
 +namespace velox {
 +
++int GetSpaceCount() {
++  auto& st = GetVeloxState();
++  if (st.space_names.empty()) {
++    st.space_names = {u"General", u"Work", u"Focus"};
++  }
++  return static_cast<int>(st.space_names.size());
++}
++
 +const std::u16string& GetSpaceName(int index) {
 +  auto& st = GetVeloxState();
-+  if (index >= 0 && index < 3) {
++  if (index >= 0 && index < static_cast<int>(st.space_names.size())) {
 +    return st.space_names[index];
 +  }
 +  static const base::NoDestructor<std::u16string> kEmpty(u"");
@@ -6132,15 +6164,21 @@ index 27efd0c423..c5b4535d8c 100644
 +    auto parsed = base::JSONReader::Read(content);
 +    if (parsed && parsed->is_list()) {
 +      const auto& list = parsed->GetList();
-+      for (size_t i = 0; i < 3 && i < list.size(); ++i) {
-+        if (list[i].is_string()) {
-+          std::string str = list[i].GetString();
-+          if (!str.empty()) {
-+            st.space_names[i] = base::UTF8ToUTF16(str);
++      if (!list.empty()) {
++        st.space_names.clear();
++        for (size_t i = 0; i < std::min(size_t(9), list.size()); ++i) {
++          if (list[i].is_string()) {
++            std::string str = list[i].GetString();
++            st.space_names.push_back(
++                str.empty() ? (u"Space " + base::NumberToString16(i + 1))
++                            : base::UTF8ToUTF16(str));
 +          }
 +        }
 +      }
 +    }
++  }
++  if (st.space_names.empty()) {
++    st.space_names = {u"General", u"Work", u"Focus"};
 +  }
 +  st.space_names_loaded = true;
 +}
@@ -6151,7 +6189,7 @@ index 27efd0c423..c5b4535d8c 100644
 +  }
 +  auto& st = GetVeloxState();
 +  base::Value::List list;
-+  for (int i = 0; i < 3; ++i) {
++  for (size_t i = 0; i < st.space_names.size(); ++i) {
 +    list.Append(base::UTF16ToUTF8(st.space_names[i]));
 +  }
 +  std::string json_str;
@@ -6163,14 +6201,31 @@ index 27efd0c423..c5b4535d8c 100644
 +}
 +
 +void SetSpaceName(int index, const std::u16string& new_name, Profile* profile) {
-+  if (index < 0 || index >= 3) {
++  auto& st = GetVeloxState();
++  if (index < 0 || index >= static_cast<int>(st.space_names.size())) {
 +    return;
 +  }
-+  auto& st = GetVeloxState();
 +  st.space_names[index] = new_name;
 +  SaveSpaceNames(profile);
 +  NotifyVeloxSpacesControls();
 +}
++
++int CreateNewSpace(Profile* profile, const std::u16string& optional_name = u"") {
++  auto& st = GetVeloxState();
++  if (st.space_names.size() >= 9) {
++    return -1;
++  }
++  int new_idx = static_cast<int>(st.space_names.size());
++  std::u16string final_name = optional_name.empty()
++      ? (u"Space " + base::NumberToString16(new_idx + 1))
++      : optional_name;
++  st.space_names.push_back(final_name);
++  SaveSpaceNames(profile);
++  NotifyVeloxSpacesControls();
++  return new_idx;
++}
++
++bool DeleteSpace(int space_idx, Browser* browser);
 +
 +void RegisterTabContainer(TabStrip* tab_strip, TabContainer* container) {
 +  auto& st = GetVeloxState();
@@ -6440,7 +6495,8 @@ index 27efd0c423..c5b4535d8c 100644
 +    if (!tab || tab->closing()) {
 +      continue;
 +    }
-+    const int ws = std::clamp(GetTabWorkspace(tab), 0, 2);
++    const int max_ws = std::max(0, velox::GetSpaceCount() - 1);
++    const int ws = std::clamp(GetTabWorkspace(tab), 0, max_ws);
 +    std::string url_spec;
 +    if (model && model->ContainsIndex(i)) {
 +      if (auto* wc = model->GetWebContentsAt(i)) {
@@ -6459,8 +6515,8 @@ index 27efd0c423..c5b4535d8c 100644
 +  }
 +}
 +
- }  // namespace
- 
++}  // namespace
++
 +void SaveTabSpaces() {
 +  auto& st = GetVeloxState();
 +  st.save_scheduled = false;
@@ -6494,7 +6550,8 @@ index 27efd0c423..c5b4535d8c 100644
 +  std::vector<TabSpacePersistedEntry> entries;
 +  int active_ws = 0;
 +  for (const TabStrip* ts : strips) {
-+    active_ws = std::clamp(GetTabStripActiveWorkspace(ts), 0, 2);
++    const int max_ws = std::max(0, velox::GetSpaceCount() - 1);
++    active_ws = std::clamp(GetTabStripActiveWorkspace(ts), 0, max_ws);
 +    AppendTabStripEntries(ts, &entries);
 +  }
 +  if (entries.empty()) {
@@ -6606,7 +6663,8 @@ index 27efd0c423..c5b4535d8c 100644
 +    return;
 +  }
 +
-+  int restored_ws = std::clamp(it->ws, 0, 2);
++  const int max_ws = std::max(0, velox::GetSpaceCount() - 1);
++  int restored_ws = std::clamp(it->ws, 0, max_ws);
 +  st.pending_restore.erase(it);
 +  st.restored_tabs.insert(tab);
 +
@@ -6735,7 +6793,7 @@ index 27efd0c423..c5b4535d8c 100644
 +}
 +
 +void SwitchWorkspace(Browser* browser, int workspace_id) {
-+  if (!browser || workspace_id < 0 || workspace_id > 2) {
++  if (!browser || workspace_id < 0 || workspace_id >= velox::GetSpaceCount()) {
 +    return;
 +  }
 +  BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(browser);
@@ -6846,7 +6904,7 @@ index 27efd0c423..c5b4535d8c 100644
 +}
 +
 +void MoveActiveTabToWorkspace(Browser* browser, int workspace_id) {
-+  if (!browser || workspace_id < 0 || workspace_id > 2) {
++  if (!browser || workspace_id < 0 || workspace_id >= velox::GetSpaceCount()) {
 +    return;
 +  }
 +  BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(browser);
@@ -6911,7 +6969,7 @@ index 27efd0c423..c5b4535d8c 100644
 +
 +void MoveTabAtIndexToWorkspace(TabStripModel* model, int tab_index, int target_workspace) {
 +  if (!model || tab_index < 0 || tab_index >= model->count() ||
-+      target_workspace < 0 || target_workspace > 2) {
++      target_workspace < 0 || target_workspace >= velox::GetSpaceCount()) {
 +    return;
 +  }
 +  content::WebContents* contents = model->GetWebContentsAt(tab_index);
@@ -7140,6 +7198,52 @@ index 27efd0c423..c5b4535d8c 100644
 +  }
 +}
 +
++bool DeleteSpace(int space_idx, Browser* browser) {
++  auto& st = GetVeloxState();
++  if (st.space_names.size() <= 1 || space_idx < 0 ||
++      space_idx >= static_cast<int>(st.space_names.size())) {
++    return false;
++  }
++
++  if (browser) {
++    BrowserView* bv = BrowserView::GetBrowserViewForBrowser(browser);
++    TabStrip* tab_strip = bv ? bv->tabstrip() : nullptr;
++    if (tab_strip) {
++      for (int i = 0; i < tab_strip->GetTabCount(); ++i) {
++        Tab* t = SafeGetTab(tab_strip, i);
++        if (!t) {
++          continue;
++        }
++        int t_ws = GetTabWorkspace(t);
++        if (t_ws == space_idx) {
++          st.tab_workspaces[t] = 0;
++        } else if (t_ws > space_idx) {
++          st.tab_workspaces[t] = t_ws - 1;
++        }
++      }
++    }
++  }
++
++  st.space_names.erase(st.space_names.begin() + space_idx);
++  SaveSpaceNames(browser ? browser->profile() : nullptr);
++
++  if (browser) {
++    BrowserView* bv = BrowserView::GetBrowserViewForBrowser(browser);
++    TabStrip* tab_strip = bv ? bv->tabstrip() : nullptr;
++    if (tab_strip) {
++      int active = GetTabStripActiveWorkspace(tab_strip);
++      if (active == space_idx) {
++        SwitchWorkspace(browser, std::max(0, space_idx - 1));
++      } else if (active > space_idx) {
++        SwitchWorkspace(browser, active - 1);
++      }
++    }
++  }
++
++  NotifyVeloxSpacesControls();
++  return true;
++}
++
 +}  // namespace velox
 +
 +void VeloxSwitchWorkspaceCommand(Browser* browser, int workspace_id) {
@@ -7204,7 +7308,7 @@ index 27efd0c423..c5b4535d8c 100644
 +
 +    // Title label
 +    auto* title_label = AddChildView(std::make_unique<views::Label>(
-+        u"✏️ Rename Space " + base::NumberToString16(space_index_ + 1),
++        u"Rename Space " + base::NumberToString16(space_index_ + 1),
 +        views::style::CONTEXT_DIALOG_TITLE, views::style::STYLE_PRIMARY));
 +    title_label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
 +    title_label->SetEnabledColor(SkColorSetRGB(241, 245, 249));
@@ -7296,8 +7400,12 @@ index 27efd0c423..c5b4535d8c 100644
 +
 +  void OnResetDefault() {
 +    const std::u16string kDefaults[3] = {u"General", u"Work", u"Focus"};
++    std::u16string def_name =
++        (space_index_ < 3)
++            ? kDefaults[space_index_]
++            : (u"Space " + base::NumberToString16(space_index_ + 1));
 +    if (name_field_) {
-+      name_field_->SetText(kDefaults[space_index_]);
++      name_field_->SetText(def_name);
 +    }
 +    OnSave();
 +  }
@@ -7313,7 +7421,9 @@ index 27efd0c423..c5b4535d8c 100644
 +    base::TrimWhitespace(text, base::TRIM_ALL, &text);
 +    if (text.empty()) {
 +      const std::u16string kDefaults[3] = {u"General", u"Work", u"Focus"};
-+      text = kDefaults[space_index_];
++      text = (space_index_ < 3)
++                 ? kDefaults[space_index_]
++                 : (u"Space " + base::NumberToString16(space_index_ + 1));
 +    }
 +    if (text.length() > 14) {
 +      text = text.substr(0, 14);
@@ -7592,10 +7702,8 @@ index 27efd0c423..c5b4535d8c 100644
 +    h_layout->set_cross_axis_alignment(
 +        views::BoxLayout::CrossAxisAlignment::kCenter);
 +
-+    const std::u16string kIcons[3] = {u"◈", u"💼", u"🎯"};
 +    std::u16string space_title =
-+        (space_index_ >= 0 && space_index_ < 3 ? kIcons[space_index_] : u"◈") +
-+        u" " + base::NumberToString16(space_index_ + 1) + u" " +
++        base::NumberToString16(space_index_ + 1) + u" " +
 +        velox::GetSpaceName(space_index_);
 +    auto* space_lbl = header->AddChildView(std::make_unique<views::Label>(
 +        space_title, views::style::CONTEXT_DIALOG_TITLE,
@@ -7695,6 +7803,8 @@ index 27efd0c423..c5b4535d8c 100644
 +    kCommandRename = 1,
 +    kCommandMoveTab,
 +    kCommandSwitch,
++    kCommandNewSpace,
++    kCommandDeleteSpace,
 +    kCommandResetName,
 +  };
 +
@@ -7720,11 +7830,11 @@ index 27efd0c423..c5b4535d8c 100644
 +
 +  void UpdateTooltip() {
 +    std::u16string tip =
-+        u"Velox Spaces: Click to expand • Double-click or Right-click to rename • "
-+        u"Ctrl+1 / Ctrl+2 / Ctrl+3\n";
-+    for (int i = 0; i < 3; ++i) {
++        u"Velox Spaces: Click to expand • Double-click or Right-click to rename • Click + to add space\n";
++    int count = velox::GetSpaceCount();
++    for (int i = 0; i < count; ++i) {
 +      tip += u"[" + base::NumberToString16(i + 1) + u"] " + velox::GetSpaceName(i);
-+      if (i < 2) {
++      if (i < count - 1) {
 +        tip += u"  •  ";
 +      }
 +    }
@@ -7752,41 +7862,39 @@ index 27efd0c423..c5b4535d8c 100644
 +    if (i == active) {
 +      const gfx::FontList bold_font = gfx::FontList().Derive(
 +          0, gfx::Font::NORMAL, gfx::Font::Weight::BOLD);
-+      const std::u16string kIcons[3] = {u"◈", u"💼", u"🎯"};
-+      std::u16string label = (i >= 0 && i < 3 ? kIcons[i] : u"◈") +
-+                             u" " + base::NumberToString16(i + 1) + u" " +
++      std::u16string label = base::NumberToString16(i + 1) + u" " +
 +                             velox::GetSpaceName(i);
 +      int text_w = gfx::Canvas::GetStringWidth(label, bold_font);
-+      return std::clamp(text_w + 16, 60, 120);
++      return std::clamp(text_w + 16, 56, 120);
 +    }
 +    const gfx::FontList semi_font = gfx::FontList().Derive(
 +        0, gfx::Font::NORMAL, gfx::Font::Weight::SEMIBOLD);
-+    const std::u16string kIcons[3] = {u"◈", u"💼", u"🎯"};
-+    std::u16string label = (i >= 0 && i < 3 ? kIcons[i] : u"◈") +
-+                           u" " + base::NumberToString16(i + 1);
++    std::u16string label = base::NumberToString16(i + 1);
 +    int text_w = gfx::Canvas::GetStringWidth(label, semi_font);
-+    return std::clamp(text_w + 12, 32, 44);
++    return std::clamp(text_w + 12, 26, 36);
 +  }
 +
 +  int GetCollapsedWidth() const {
 +    const int active = GetActiveSpace();
 +    const gfx::FontList bold_font = gfx::FontList().Derive(
 +        0, gfx::Font::NORMAL, gfx::Font::Weight::BOLD);
-+    const std::u16string kIcons[3] = {u"◈", u"💼", u"🎯"};
-+    std::u16string label = (active >= 0 && active < 3 ? kIcons[active] : u"◈") +
-+                           u" " + base::NumberToString16(active + 1) + u" " +
++    std::u16string label = base::NumberToString16(active + 1) + u" " +
 +                           velox::GetSpaceName(active) + u"  ▾";
 +    int text_w = gfx::Canvas::GetStringWidth(label, bold_font);
-+    return std::clamp(text_w + 22, 75, 135);
++    return std::clamp(text_w + 20, 70, 130);
 +  }
 +
 +  int GetExpandedWidth() const {
 +    const int active = GetActiveSpace();
++    const int count = velox::GetSpaceCount();
 +    int total_w = 6;
-+    for (int i = 0; i < 3; ++i) {
++    for (int i = 0; i < count; ++i) {
 +      total_w += GetSegmentWidth(i, active) + 2;
 +    }
-+    total_w += 22;  // Collapse '◂' button
++    if (count < 9) {
++      total_w += 22;  // '+' button
++    }
++    total_w += 22;  // '◂' button
 +    return total_w;
 +  }
 +
@@ -7829,25 +7937,34 @@ index 27efd0c423..c5b4535d8c 100644
 +  }
 +
 +  // Returns:
-+  // 0, 1, 2 for space 0, 1, 2.
-+  // -2 for the collapse button '◂' at the end of the expanded bar.
++  // 0 .. count-1 for space segments
++  // -3 for '+' new space button
++  // -2 for '◂' collapse button
++  // -1 for out of bounds
 +  int HitSpaceIndex(int x) const {
 +    if (!is_expanded_ && !morph_animation_.is_animating()) {
 +      return GetActiveSpace();
 +    }
 +    const int active = GetActiveSpace();
++    const int count = velox::GetSpaceCount();
 +    int cur_x = 3;
-+    for (int i = 0; i < 3; ++i) {
++    for (int i = 0; i < count; ++i) {
 +      int seg_w = GetSegmentWidth(i, active);
-+      if (x < cur_x + seg_w) {
++      if (x >= cur_x && x < cur_x + seg_w) {
 +        return i;
 +      }
 +      cur_x += seg_w + 2;
 +    }
-+    if (x >= cur_x) {
-+      return -2;
++    if (count < 9) {
++      if (x >= cur_x && x < cur_x + 22) {
++        return -3;  // '+' New Space button
++      }
++      cur_x += 24;
 +    }
-+    return 2;
++    if (x >= cur_x) {
++      return -2;  // '◂' Collapse button
++    }
++    return -1;
 +  }
 +
 +  bool OnMousePressed(const ui::MouseEvent& event) override {
@@ -7855,31 +7972,32 @@ index 27efd0c423..c5b4535d8c 100644
 +
 +    // Double-click opens rename dialog directly
 +    if (event.flags() & ui::EF_IS_DOUBLE_CLICK) {
-+      if (space_idx >= 0 && space_idx <= 2) {
++      if (space_idx >= 0 && space_idx < velox::GetSpaceCount()) {
 +        VeloxSpaceTabPreviewBubble::ClosePreview();
 +        VeloxRenameSpaceBubble::Show(this, browser_, space_idx);
 +        return true;
 +      }
 +    }
 +
-+    // Right-click opens context menu with Rename, Move Tab, Switch, Reset
++    // Right-click opens context menu
 +    if (event.IsOnlyRightMouseButton()) {
-+      if (space_idx >= 0 && space_idx <= 2) {
-+        VeloxSpaceTabPreviewBubble::ClosePreview();
-+        ShowContextMenuForSpace(space_idx, event.location());
-+        return true;
-+      }
++      VeloxSpaceTabPreviewBubble::ClosePreview();
++      int target_idx = (space_idx >= 0 && space_idx < velox::GetSpaceCount())
++                           ? space_idx
++                           : GetActiveSpace();
++      ShowContextMenuForSpace(target_idx, event.location());
++      return true;
 +    }
 +
 +    // Middle-click instantly moves current tab to this space
 +    if (event.IsMiddleMouseButton()) {
-+      if (space_idx >= 0 && space_idx <= 2) {
++      if (space_idx >= 0 && space_idx < velox::GetSpaceCount()) {
 +        velox::MoveActiveTabToWorkspace(browser_, space_idx);
 +        return true;
 +      }
 +    }
 +
-+    // Left-click switches workspace or toggles morphing expansion
++    // Left-click switches workspace, expands, adds space, or collapses
 +    if (event.IsOnlyLeftMouseButton()) {
 +      VeloxSpaceTabPreviewBubble::ClosePreview();
 +      if (!is_expanded_ && !morph_animation_.is_animating()) {
@@ -7889,11 +8007,25 @@ index 27efd0c423..c5b4535d8c 100644
 +
 +      // In expanded mode:
 +      if (space_idx == -2) {
++        // Collapse '◂'
 +        Collapse();
 +        return true;
 +      }
 +
-+      if (space_idx >= 0 && space_idx <= 2) {
++      if (space_idx == -3) {
++        // '+' New Space button!
++        int new_idx =
++            velox::CreateNewSpace(browser_ ? browser_->profile() : nullptr);
++        if (new_idx >= 0) {
++          velox::SwitchWorkspace(browser_, new_idx);
++          PreferredSizeChanged();
++          SchedulePaint();
++          VeloxRenameSpaceBubble::Show(this, browser_, new_idx);
++        }
++        return true;
++      }
++
++      if (space_idx >= 0 && space_idx < velox::GetSpaceCount()) {
 +        if (space_idx == GetActiveSpace()) {
 +          Collapse();
 +        } else {
@@ -7913,7 +8045,7 @@ index 27efd0c423..c5b4535d8c 100644
 +      SchedulePaint();
 +    }
 +
-+    if (hit >= 0 && hit <= 2) {
++    if (hit >= 0 && hit < velox::GetSpaceCount()) {
 +      hover_timer_.Stop();
 +      hover_timer_.Start(
 +          FROM_HERE, base::Milliseconds(140),
@@ -7949,7 +8081,7 @@ index 27efd0c423..c5b4535d8c 100644
 +  }
 +
 +  void ShowHoverPreview(int space_idx) {
-+    if (space_idx >= 0 && space_idx <= 2) {
++    if (space_idx >= 0 && space_idx < velox::GetSpaceCount()) {
 +      VeloxSpaceTabPreviewBubble::Show(this, browser_, space_idx);
 +    }
 +  }
@@ -8005,8 +8137,8 @@ index 27efd0c423..c5b4535d8c 100644
 +    canvas->sk_canvas()->restore();  // Back to DIPs
 +
 +    const int active = GetActiveSpace();
++    const int count = velox::GetSpaceCount();
 +    const double progress = morph_animation_.GetCurrentValue();
-+    const std::u16string kIcons[3] = {u"◈", u"💼", u"🎯"};
 +
 +    // 1. COLLAPSED VIEW (when progress is close to 0)
 +    if (!is_expanded_ && progress <= 0.05) {
@@ -8035,8 +8167,7 @@ index 27efd0c423..c5b4535d8c 100644
 +
 +      canvas->sk_canvas()->restore();
 +
-+      std::u16string icon = (active >= 0 && active < 3 ? kIcons[active] : u"◈");
-+      std::u16string label = icon + u" " + base::NumberToString16(active + 1) + u" " +
++      std::u16string label = base::NumberToString16(active + 1) + u" " +
 +                             velox::GetSpaceName(active) + u"  ▾";
 +      canvas->DrawStringRectWithFlags(
 +          label,
@@ -8048,7 +8179,7 @@ index 27efd0c423..c5b4535d8c 100644
 +
 +    // 2. EXPANDED OR MORPHING VIEW
 +    int cur_x = 3;
-+    for (int i = 0; i < 3; ++i) {
++    for (int i = 0; i < count; ++i) {
 +      int seg_w = GetSegmentWidth(i, active);
 +      if (cur_x + seg_w > width() - 2) {
 +        break;
@@ -8088,11 +8219,10 @@ index 27efd0c423..c5b4535d8c 100644
 +                             : (i == hovered_space_
 +                                    ? SkColorSetRGB(226, 232, 240)
 +                                    : SkColorSetRGB(148, 163, 184));
-+      std::u16string icon = (i >= 0 && i < 3 ? kIcons[i] : u"◈");
 +      std::u16string label =
 +          (i == active)
-+              ? (icon + u" " + base::NumberToString16(i + 1) + u" " + velox::GetSpaceName(i))
-+              : (icon + u" " + base::NumberToString16(i + 1));
++              ? (base::NumberToString16(i + 1) + u" " + velox::GetSpaceName(i))
++              : base::NumberToString16(i + 1);
 +      canvas->DrawStringRectWithFlags(
 +          label,
 +          gfx::FontList().Derive(
@@ -8103,6 +8233,30 @@ index 27efd0c423..c5b4535d8c 100644
 +          gfx::Canvas::TEXT_ALIGN_CENTER | gfx::Canvas::NO_SUBPIXEL_RENDERING);
 +
 +      cur_x += seg_w + 2;
++    }
++
++    // '+' New Space button
++    if (cur_x < width() - 26 && count < 9) {
++      gfx::Rect add_rect(cur_x, 3, 20, height() - 6);
++      if (hovered_space_ == -3) {
++        gfx::ScopedCanvas add_scoped(canvas);
++        const float s = canvas->UndoDeviceScaleFactor();
++        gfx::RectF af(add_rect);
++        af.Scale(s);
++        SkRRect arr;
++        arr.setRectXY(gfx::RectFToSkRect(af), af.height() / 2.0f, af.height() / 2.0f);
++        cc::PaintFlags add_fill;
++        add_fill.setAntiAlias(true);
++        add_fill.setColor(SkColorSetARGB(45, 59, 130, 246));
++        canvas->sk_canvas()->drawRRect(arr, add_fill);
++      }
++      canvas->DrawStringRectWithFlags(
++          u"+",
++          gfx::FontList().Derive(0, gfx::Font::NORMAL, gfx::Font::Weight::BOLD),
++          (hovered_space_ == -3) ? SK_ColorWHITE : SkColorSetRGB(148, 163, 184),
++          add_rect,
++          gfx::Canvas::TEXT_ALIGN_CENTER | gfx::Canvas::NO_SUBPIXEL_RENDERING);
++      cur_x += 22;
 +    }
 +
 +    // Collapse chevron '◂' at the end
@@ -8141,9 +8295,30 @@ index 27efd0c423..c5b4535d8c 100644
 +      case kCommandSwitch:
 +        velox::SwitchWorkspace(browser_, context_space_idx_);
 +        break;
++      case kCommandNewSpace: {
++        int new_idx =
++            velox::CreateNewSpace(browser_ ? browser_->profile() : nullptr);
++        if (new_idx >= 0) {
++          velox::SwitchWorkspace(browser_, new_idx);
++          PreferredSizeChanged();
++          SchedulePaint();
++          VeloxRenameSpaceBubble::Show(this, browser_, new_idx);
++        }
++        break;
++      }
++      case kCommandDeleteSpace: {
++        velox::DeleteSpace(context_space_idx_, browser_);
++        PreferredSizeChanged();
++        SchedulePaint();
++        break;
++      }
 +      case kCommandResetName: {
 +        const std::u16string kDefaults[3] = {u"General", u"Work", u"Focus"};
-+        velox::SetSpaceName(context_space_idx_, kDefaults[context_space_idx_],
++        std::u16string def_name =
++            (context_space_idx_ < 3)
++                ? kDefaults[context_space_idx_]
++                : (u"Space " + base::NumberToString16(context_space_idx_ + 1));
++        velox::SetSpaceName(context_space_idx_, def_name,
 +                            browser_ ? browser_->profile() : nullptr);
 +        break;
 +      }
@@ -8157,14 +8332,22 @@ index 27efd0c423..c5b4535d8c 100644
 +    std::u16string name = velox::GetSpaceName(space_idx);
 +
 +    menu_model_->AddItem(kCommandRename,
-+                         u"✏️ Rename \"" + name + u"\" Space...");
++                         u"Rename \"" + name + u"\" Space...");
 +    menu_model_->AddItem(kCommandMoveTab,
-+                         u"➡️ Move Current Tab to this Space");
++                         u"Move Current Tab to this Space");
 +    if (space_idx != GetActiveSpace()) {
-+      menu_model_->AddItem(kCommandSwitch, u"🔄 Switch to this Space");
++      menu_model_->AddItem(kCommandSwitch, u"Switch to this Space");
 +    }
 +    menu_model_->AddSeparator(ui::MenuSeparatorType::NORMAL_SEPARATOR);
-+    menu_model_->AddItem(kCommandResetName, u"↩️ Reset Name to Default");
++    if (velox::GetSpaceCount() < 9) {
++      menu_model_->AddItem(kCommandNewSpace, u"Create New Space...");
++    }
++    if (velox::GetSpaceCount() > 1) {
++      menu_model_->AddItem(kCommandDeleteSpace,
++                           u"Delete \"" + name + u"\" Space");
++    }
++    menu_model_->AddSeparator(ui::MenuSeparatorType::NORMAL_SEPARATOR);
++    menu_model_->AddItem(kCommandResetName, u"Reset Name to Default");
 +
 +    menu_runner_ = std::make_unique<views::MenuRunner>(
 +        menu_model_.get(),
@@ -8205,7 +8388,7 @@ index 27efd0c423..c5b4535d8c 100644
  class ToolbarView::ContainerView : public views::View {
    METADATA_HEADER(ContainerView, views::View)
  
-@@ -255,6 +2838,7 @@ ToolbarView::~ToolbarView() {
+@@ -255,6 +2997,7 @@ ToolbarView::~ToolbarView() {
    }
  
    overflow_button_->set_toolbar_controller(nullptr);
@@ -8213,7 +8396,7 @@ index 27efd0c423..c5b4535d8c 100644
  
    for (const auto& view_and_command : GetViewCommandMap()) {
      chrome::RemoveCommandObserver(browser_, view_and_command.second, this);
-@@ -399,6 +2983,10 @@ void ToolbarView::Init() {
+@@ -399,6 +3142,10 @@ void ToolbarView::Init() {
    reload_ = container_view_->AddChildView(std::move(reload));
    home_ = container_view_->AddChildView(std::move(home));
  
@@ -8224,7 +8407,7 @@ index 27efd0c423..c5b4535d8c 100644
    location_bar_ = container_view_->AddChildView(std::move(location_bar));
  
    if (extensions_container) {
-@@ -513,6 +3101,12 @@ void ToolbarView::Init() {
+@@ -513,6 +3260,12 @@ void ToolbarView::Init() {
    new_tab_button_ = container_view_->AddChildView(std::move(new_tab_button));
  #endif  // BUILDFLAG(ENABLE_WEBUI_TAB_STRIP)
  
@@ -8237,7 +8420,7 @@ index 27efd0c423..c5b4535d8c 100644
    overflow_button_ =
        container_view_->AddChildView(std::make_unique<OverflowButton>());
    overflow_button_->SetVisible(false);
-@@ -1117,6 +3711,15 @@ void ToolbarView::UpdateTypeAndSeverity(
+@@ -1117,6 +3870,15 @@ void ToolbarView::UpdateTypeAndSeverity(
    }
    app_menu_button_->GetViewAccessibility().SetName(accname_app);
    app_menu_button_->SetTypeAndSeverity(type_and_severity);
