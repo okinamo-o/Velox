@@ -1,5 +1,5 @@
 diff --git a/chrome/browser/resources/new_tab_page/app.css b/chrome/browser/resources/new_tab_page/app.css
-index 39980d76da..74357930c3 100644
+index 39980d76da..1b933d1de4 100644
 --- a/chrome/browser/resources/new_tab_page/app.css
 +++ b/chrome/browser/resources/new_tab_page/app.css
 @@ -11,16 +11,19 @@
@@ -208,7 +208,7 @@ index 39980d76da..74357930c3 100644
  }
  
  ntp-lens-upload-dialog {
-@@ -413,3 +497,1303 @@ ntp-lens-upload-dialog {
+@@ -413,3 +497,1254 @@ ntp-lens-upload-dialog {
  #microsoftAuth {
    display: none;
  }
@@ -1283,18 +1283,6 @@ index 39980d76da..74357930c3 100644
 +  min-width: 0;
 +}
 +
-+.velox-recent-widget {
-+  align-self: start;
-+  grid-area: recent;
-+  margin: 0;
-+  padding: 10px 12px !important;
-+}
-+
-+.velox-recent-widget .velox-widget-header {
-+  font-size: 11.5px;
-+  margin-bottom: 6px;
-+}
-+
 +.velox-mostused-widget {
 +  align-self: start;
 +  grid-area: mostused;
@@ -1335,43 +1323,6 @@ index 39980d76da..74357930c3 100644
 +  height: 16px;
 +  border-radius: 3px;
 +  flex-shrink: 0;
-+}
-+
-+.velox-history-link {
-+  align-items: center;
-+  background: rgba(18, 28, 52, 0.45);
-+  border: 1px solid rgba(255, 255, 255, 0.05);
-+  border-radius: 9px;
-+  color: inherit;
-+  display: flex;
-+  gap: 10px;
-+  min-height: 38px;
-+  padding: 6px 10px;
-+  text-decoration: none;
-+  transition: all 0.15s ease;
-+}
-+
-+.velox-history-link:hover {
-+  background: rgba(30, 41, 75, 0.6);
-+  border-color: rgba(56, 189, 248, 0.4);
-+}
-+
-+.velox-history-icon {
-+  align-items: center;
-+  background: rgba(56, 189, 248, 0.14);
-+  border-radius: 7px;
-+  color: #7dd3fc;
-+  display: flex;
-+  flex: 0 0 24px;
-+  font-size: 13px;
-+  height: 24px;
-+  justify-content: center;
-+}
-+
-+.velox-history-arrow {
-+  color: #7dd3fc;
-+  font-size: 13px;
-+  margin-left: auto;
 +}
 +
 +.velox-pinned-link {
@@ -1513,10 +1464,10 @@ index 39980d76da..74357930c3 100644
 +  }
 +}
 diff --git a/chrome/browser/resources/new_tab_page/app.html b/chrome/browser/resources/new_tab_page/app.html
-index f7b589a1a8..75ec32152a 100644
+index f7b589a1a8..342f0410b1 100644
 --- a/chrome/browser/resources/new_tab_page/app.html
 +++ b/chrome/browser/resources/new_tab_page/app.html
-@@ -2,129 +2,380 @@
+@@ -2,129 +2,360 @@
    ${this.lazyRender_ && this.microsoftModuleEnabled_ ? html`
      <iframe id="microsoftAuth" src="${this.microsoftAuthIframePath_}"></iframe>
    ` : ''}
@@ -1554,8 +1505,7 @@ index f7b589a1a8..75ec32152a 100644
 -      </ntp-lens-upload-dialog>
 -    ` : ''}
 -  </div>
-+
-   ${this.lazyRender_ ? html`
+-  ${this.lazyRender_ ? html`
 -    <cr-toast id="webstoreToast" duration="10000" hidden>
 -      <div>$i18n{webstoreThemesToastMessage}</div>
 -      <cr-button @click="${this.onWebstoreToastButtonClick_}">
@@ -1563,7 +1513,8 @@ index f7b589a1a8..75ec32152a 100644
 -      </cr-button>
 -    </cr-toast>
 -  ` : ''}
--  ${this.lazyRender_ ? html`
++
+   ${this.lazyRender_ ? html`
 -    ${this.shortcutsEnabled_ ? html`
 -      <cr-most-visited id="mostVisited" .theme="${this.theme_?.mostVisited || null}"
 -          single-row reflow-on-overflow>
@@ -1761,9 +1712,7 @@ index f7b589a1a8..75ec32152a 100644
 +              <span class="velox-toggle-icon">${this.scratchpadOpen_ ? '▾' : '▸'}</span>
 +              <span>${this.scratchpadOpen_ ? 'Collapse' : 'Expand'}</span>
 +            </button>
-           </div>
--        </cr-button>
--      ` : ''}
++          </div>
 +          <div class="velox-stats-bar" aria-label="Focus summary">
 +            <div class="velox-stat-pill">
 +              <span class="velox-stat-icon ram-glow">
@@ -1916,28 +1865,7 @@ index f7b589a1a8..75ec32152a 100644
 +          <div class="velox-quote-author">— Velox</div>
 +        </div>
 +
-+        <!-- Continue browsing -->
-+        <div class="velox-widget velox-recent-widget">
-+          <div class="velox-widget-header">
-+            <div class="velox-widget-title-group">
-+              <svg class="velox-lucide-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-+                <circle cx="12" cy="12" r="10"></circle>
-+                <polyline points="12 6 12 12 16 14"></polyline>
-+              </svg>
-+              <span>Recent History</span>
-+            </div>
-+          </div>
-+          <a class="velox-history-link" href="chrome://history/">
-+            <span class="velox-history-icon">↗</span>
-+            <span class="velox-item-details">
-+              <span class="velox-item-title">Browse recent history</span>
-+              <span class="velox-item-sub">Return to a page you visited</span>
-+            </span>
-+            <span class="velox-history-arrow">→</span>
-+          </a>
-+        </div>
-+
-+        <!-- Most used Links -->
++        <!-- Most used Links (Top Sites of the Week) -->
 +        <div class="velox-widget velox-mostused-widget">
 +          <div class="velox-widget-header">
 +            <div class="velox-widget-title-group">
@@ -1946,6 +1874,7 @@ index f7b589a1a8..75ec32152a 100644
 +              </svg>
 +              <span>Pinned & Top Sites</span>
 +            </div>
++            <span class="velox-space-summary-tip">This Week</span>
 +          </div>
 +          <div class="velox-widget-list">
 +            ${this.mostUsedLinks_.map((link, idx) => html`
@@ -1961,9 +1890,11 @@ index f7b589a1a8..75ec32152a 100644
 +              </div>
 +            `)}
 +            ${this.mostUsedLinks_.length === 0 ? html`
-+              <div class="velox-empty-state">Top sites will appear here as you browse.</div>
++              <div class="velox-empty-state">Top sites visited this week will appear here.</div>
 +            ` : ''}
-+          </div>
+           </div>
+-        </cr-button>
+-      ` : ''}
 +        </div>
 +      </div> <!-- /#veloxSidebarColumn -->
 +    </div> <!-- /#veloxLayoutContainer -->
@@ -2008,7 +1939,7 @@ index f7b589a1a8..75ec32152a 100644
 -  </defs>
 -</svg>
 diff --git a/chrome/browser/resources/new_tab_page/app.ts b/chrome/browser/resources/new_tab_page/app.ts
-index 42406756b4..9ef2f41e6c 100644
+index 42406756b4..2956b5ca22 100644
 --- a/chrome/browser/resources/new_tab_page/app.ts
 +++ b/chrome/browser/resources/new_tab_page/app.ts
 @@ -15,6 +15,7 @@ import type {ClickInfo} from 'chrome://resources/js/browser_command.mojom-webui.
@@ -2186,7 +2117,7 @@ index 42406756b4..9ef2f41e6c 100644
 +    try {
 +      const items = await sendWithPromise('getVeloxMostUsedLinks') as Array<{title: string, url: string}>;
 +      if (Array.isArray(items)) {
-+        this.mostUsedLinks_ = items.slice(0, 5).map(item => {
++        this.mostUsedLinks_ = items.slice(0, 7).map(item => {
 +          const faviconUrl = new URL('chrome://favicon2/');
 +          faviconUrl.searchParams.set('size', '24');
 +          faviconUrl.searchParams.set('scaleFactor', '1x');

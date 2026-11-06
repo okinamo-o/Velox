@@ -4077,7 +4077,7 @@ index 27efd0c423..046f4b855a 100644
  
  ExtensionsToolbarContainer* ToolbarView::GetExtensionsToolbarContainer() {
 diff --git a/chrome/browser/ui/webui/new_tab_page/new_tab_page_ui.cc b/chrome/browser/ui/webui/new_tab_page/new_tab_page_ui.cc
-index a757796334..9fe798b287 100644
+index a757796334..52b37bf52c 100644
 --- a/chrome/browser/ui/webui/new_tab_page/new_tab_page_ui.cc
 +++ b/chrome/browser/ui/webui/new_tab_page/new_tab_page_ui.cc
 @@ -4,7 +4,10 @@
@@ -4126,7 +4126,7 @@ index a757796334..9fe798b287 100644
  #include "chrome/browser/ui/views/side_panel/customize_chrome/customize_chrome_utils.h"
  #include "chrome/browser/ui/views/side_panel/customize_chrome/side_panel_controller_views.h"
  #include "chrome/browser/ui/webui/browser_command/browser_command_handler.h"
-@@ -486,6 +506,302 @@ content::WebUIDataSource* CreateAndAddNewTabPageUiHtmlSource(Profile* profile) {
+@@ -486,6 +506,337 @@ content::WebUIDataSource* CreateAndAddNewTabPageUiHtmlSource(Profile* profile) {
    return source;
  }
  
@@ -4192,18 +4192,22 @@ index a757796334..9fe798b287 100644
 +        HistoryServiceFactory::GetForProfile(
 +            profile, ServiceAccessType::EXPLICIT_ACCESS);
 +    if (history_service) {
-+      history_service->QueryMostVisitedURLs(
-+          40,
-+          base::BindOnce(&VeloxNtpTabGroupsHandler::OnMostVisitedUrlsAvailable,
++      history::QueryOptions options;
++      options.SetRecentDayRange(7);  // Query history for the last 7 days (this week)
++      options.max_count = 200;
++      options.duplicate_policy = history::QueryOptions::REMOVE_ALL_DUPLICATES;
++      history_service->QueryHistory(
++          std::u16string(), options,
++          base::BindOnce(&VeloxNtpTabGroupsHandler::OnWeeklyHistoryAvailable,
 +                         weak_ptr_factory_.GetWeakPtr(), callback_id),
 +          &cancelable_task_tracker_);
 +      return;
 +    }
-+    OnMostVisitedUrlsAvailable(callback_id, {});
++    OnWeeklyHistoryAvailable(callback_id, history::QueryResults());
 +  }
 +
-+  void OnMostVisitedUrlsAvailable(std::string callback_id,
-+                                  history::MostVisitedURLList urls) {
++  void OnWeeklyHistoryAvailable(std::string callback_id,
++                                history::QueryResults results) {
 +    if (!IsJavascriptAllowed()) {
 +      return;
 +    }
@@ -4229,34 +4233,65 @@ index a757796334..9fe798b287 100644
 +      return true;
 +    };
 +
++    struct WeeklySiteInfo {
++      GURL url;
++      std::string title;
++      int visit_count = 0;
++      base::Time latest_visit;
++    };
++
++    std::map<std::string, WeeklySiteInfo> site_map;
++    std::vector<std::string> host_order;
++
++    for (const auto& item : results) {
++      if (!is_valid_url(item.url())) {
++        continue;
++      }
++      std::string norm_host = normalize_host(item.url().host());
++      int count = std::max(1, item.visit_count());
++      auto it = site_map.find(norm_host);
++      if (it == site_map.end()) {
++        std::string title = base::UTF16ToUTF8(item.title());
++        if (title.empty()) {
++          title = norm_host;
++        }
++        site_map[norm_host] = {item.url(), title, count, item.last_visit()};
++        host_order.push_back(norm_host);
++      } else {
++        it->second.visit_count += count;
++        if (item.last_visit() > it->second.latest_visit) {
++          it->second.latest_visit = item.last_visit();
++          it->second.url = item.url();
++        }
++      }
++    }
++
++    // Sort by visit_count descending, then latest_visit descending
++    std::stable_sort(
++        host_order.begin(), host_order.end(),
++        [&](const std::string& a, const std::string& b) {
++          if (site_map[a].visit_count != site_map[b].visit_count) {
++            return site_map[a].visit_count > site_map[b].visit_count;
++          }
++          return site_map[a].latest_visit > site_map[b].latest_visit;
++        });
++
 +    base::Value::List links_list;
 +    std::set<std::string> seen_hosts;
 +
-+    for (const auto& mv : urls) {
-+      if (links_list.size() >= 5) {
++    for (const std::string& h : host_order) {
++      if (links_list.size() >= 7) {
 +        break;
 +      }
-+      if (!is_valid_url(mv.url)) {
-+        continue;
-+      }
-+      std::string norm_host = normalize_host(mv.url.host());
-+      if (seen_hosts.count(norm_host)) {
-+        continue;
-+      }
-+      seen_hosts.insert(norm_host);
-+
++      seen_hosts.insert(h);
 +      base::Value::Dict dict;
-+      std::string title = base::UTF16ToUTF8(mv.title);
-+      if (title.empty()) {
-+        title = norm_host;
-+      }
-+      dict.Set("title", title);
-+      dict.Set("url", mv.url.spec());
++      dict.Set("title", site_map[h].title);
++      dict.Set("url", site_map[h].url.spec());
 +      links_list.Append(std::move(dict));
 +    }
 +
-+    // Supplement from currently open tabs if fewer than 5 links are in history.
-+    if (links_list.size() < 5 && web_ui() && web_ui()->GetWebContents()) {
++    // Supplement from currently open tabs if fewer than 7 links are in weekly history.
++    if (links_list.size() < 7 && web_ui() && web_ui()->GetWebContents()) {
 +      Browser* browser = chrome::FindBrowserWithTab(web_ui()->GetWebContents());
 +      if (browser && browser->tab_strip_model()) {
 +        TabStripModel* model = browser->tab_strip_model();
@@ -4266,7 +4301,7 @@ index a757796334..9fe798b287 100644
 +          int count = 0;
 +        };
 +        std::map<std::string, OpenSiteInfo> open_sites;
-+        std::vector<std::string> host_order;
++        std::vector<std::string> host_order_tabs;
 +        for (int i = 0; i < model->count(); ++i) {
 +          content::WebContents* tc = model->GetWebContentsAt(i);
 +          if (!tc) {
@@ -4287,17 +4322,17 @@ index a757796334..9fe798b287 100644
 +              t = norm_host;
 +            }
 +            open_sites[norm_host] = {u, t, 1};
-+            host_order.push_back(norm_host);
++            host_order_tabs.push_back(norm_host);
 +          } else {
 +            it->second.count++;
 +          }
 +        }
-+        std::stable_sort(host_order.begin(), host_order.end(),
++        std::stable_sort(host_order_tabs.begin(), host_order_tabs.end(),
 +                         [&](const std::string& a, const std::string& b) {
 +                           return open_sites[a].count > open_sites[b].count;
 +                         });
-+        for (const std::string& h : host_order) {
-+          if (links_list.size() >= 5) {
++        for (const std::string& h : host_order_tabs) {
++          if (links_list.size() >= 7) {
 +            break;
 +          }
 +          seen_hosts.insert(h);
@@ -4429,7 +4464,7 @@ index a757796334..9fe798b287 100644
  }  // namespace
  
  NewTabPageUI::NewTabPageUI(content::WebUI* web_ui)
-@@ -505,6 +821,7 @@ NewTabPageUI::NewTabPageUI(content::WebUI* web_ui)
+@@ -505,6 +856,7 @@ NewTabPageUI::NewTabPageUI(content::WebUI* web_ui)
        module_id_details_(
            ntp::MakeModuleIdDetails(NewTabPageUI::IsManagedProfile(profile_),
                                     profile_)) {
