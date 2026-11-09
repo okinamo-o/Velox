@@ -2,7 +2,7 @@
     "product":  "Velox Browser",
     "version":  "134.0.6998.187",
     "channel":  "stable",
-    "release_date":  "2026-11-09T22:17:41Z",
+    "release_date":  "2026-11-09T22:37:44Z",
     "installer":  {
                       "filename":  "VeloxSetup.exe",
                       "sha256":  "A72862862EEAD38E455898766DAE88C7D20D16E88BC15ECD3F463F6ABB94EE28",
@@ -12,7 +12,7 @@
                   },
     "portable":  {
                      "filename":  "Velox-v134.0.6998.187-Portable-x64.zip",
-                     "sha256":  "B54C2C2D8C69936DEEC01A37ADBC65B41AFC051D698B8BC9859075DA41D01A11",
+                     "sha256":  "34ED3DB3A0EA90B7BA523D139E86DAB5634EF3A17BB13903F085F1243A9CEF79",
                      "download_url":  "https://github.com/okinamo-o/Velox/releases/download/v134.0.6998.187/Velox-v134.0.6998.187-Portable-x64.zip"
                  },
     "notes":  [
