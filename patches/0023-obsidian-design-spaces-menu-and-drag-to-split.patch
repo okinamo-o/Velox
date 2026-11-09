@@ -1,5 +1,5 @@
 diff --git a/chrome/browser/resources/new_tab_page/app.css b/chrome/browser/resources/new_tab_page/app.css
-index 39980d76da..32278ab5ea 100644
+index 39980d76da..b9c5fdd863 100644
 --- a/chrome/browser/resources/new_tab_page/app.css
 +++ b/chrome/browser/resources/new_tab_page/app.css
 @@ -11,16 +11,19 @@
@@ -208,7 +208,7 @@ index 39980d76da..32278ab5ea 100644
  }
  
  ntp-lens-upload-dialog {
-@@ -413,3 +497,1500 @@ ntp-lens-upload-dialog {
+@@ -413,3 +497,1499 @@ ntp-lens-upload-dialog {
  #microsoftAuth {
    display: none;
  }
@@ -1264,11 +1264,10 @@ index 39980d76da..32278ab5ea 100644
 +  align-self: start;
 +  grid-area: shortcuts;
 +  justify-self: center;
-+  margin: 0 auto;
-+  max-width: 620px;
++  margin: 2px auto 0 auto;
++  max-width: 680px;
 +  overflow: visible;
 +  width: 100%;
-+  zoom: 0.80;
 +}
 +
 +#veloxQuickAccess {
@@ -8808,3 +8807,304 @@ index 27efd0c423..a36873955c 100644
  }
  
  ExtensionsToolbarContainer* ToolbarView::GetExtensionsToolbarContainer() {
+diff --git a/ui/webui/resources/cr_components/most_visited/most_visited.css b/ui/webui/resources/cr_components/most_visited/most_visited.css
+index feb6f7acf6..6f24c6efe6 100644
+--- a/ui/webui/resources/cr_components/most_visited/most_visited.css
++++ b/ui/webui/resources/cr_components/most_visited/most_visited.css
+@@ -12,42 +12,41 @@
+  * #css_wrapper_metadata_end */
+ 
+ :host {
+-  --icon-button-color-active: var(--google-grey-700);
+-  --icon-button-color: var(--google-grey-600);
+-  --icon-size: 48px;
+-  --tile-background-color: rgb(229, 231, 232);
+-  --tile-hover-color: rgba(var(--google-grey-900-rgb), .1);
+-  --tile-size: 112px;
+-  --title-height: 32px;
++  --icon-button-color-active: #ffffff;
++  --icon-button-color: #cbd5e1;
++  --icon-size: 34px;
++  --tile-background-color: transparent;
++  --tile-hover-color: rgba(255, 255, 255, .08);
++  --tile-size: 74px !important;
++  --title-height: 18px !important;
+ }
+ 
+ @media (prefers-color-scheme: dark) {
+   :host {
+-    --tile-background-color: var(--google-grey-100);
++    --tile-background-color: transparent;
+   }
+ }
+ 
+ :host([is-dark_]) {
+-  --icon-button-color-active: var(--google-grey-300);
+-  --icon-button-color: white;
++  --icon-button-color-active: #ffffff;
++  --icon-button-color: #cbd5e1;
+   --tile-hover-color: rgba(255, 255, 255, .1);
+ }
+ 
+ #container {
+-  --content-width: calc(var(--column-count) * var(--tile-size)
+-    /* We add an extra pixel because rounding errors on different zooms can
+-      * make the width shorter than it should be. */
+-    + 1px);
+   display: flex;
+   flex-wrap: wrap;
+-  height: calc(var(--row-count) * var(--tile-size));
+-  justify-content: center;
+-  margin-bottom: 8px;
++  gap: 8px;
++  height: auto !important;
++  justify-content: center !important;
++  margin: 0 auto 4px auto;
+   opacity: 0;
+-  overflow: hidden;
+-  padding: 2px;  /* Padding added so focus rings are not clipped. */
++  overflow: visible !important;
++  max-width: 100% !important;
++  box-sizing: border-box !important;
++  padding: 4px;
+   transition: opacity 300ms ease-in-out;
+-  width: calc(var(--content-width) + 12px);
++  width: auto !important;
+ }
+ 
+ :host([visible_]) #container {
+@@ -58,21 +57,23 @@
+ .query-tile-icon {
+   -webkit-mask-repeat: no-repeat;
+   -webkit-mask-size: 100%;
+-  height: 24px;
+-  width: 24px;
++  height: 18px;
++  width: 18px;
+ }
+ 
+ #addShortcutIconContainer {
+-  background-color:
+-      var(--add-shortcut-background-color, var(--tile-background-color));
++  background: linear-gradient(145deg, rgba(96, 165, 250, 0.16) 0%, rgba(37, 99, 235, 0.06) 100%) !important;
++  border: 1px dashed rgba(125, 185, 255, 0.38) !important;
++  border-radius: 10px !important;
++  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 2px 6px rgba(0, 0, 0, 0.28) !important;
+   margin-inline-start: auto;
+   margin-inline-end: auto;
+ }
+ 
+ #addShortcutIcon {
+   -webkit-mask-image: url(chrome://resources/images/add.svg);
+-  background-color:
+-      var(--add-shortcut-foreground-color, var(--google-grey-900));
++  background-color: #7dd3fc !important;
++  filter: drop-shadow(0 0 4px rgba(56, 189, 248, 0.5));
+ }
+ 
+ .query-tile-icon {
+@@ -88,7 +89,7 @@
+ }
+ 
+ :host([use-white-tile-icon_]) #addShortcutIcon {
+-  background-color: white;
++  background-color: #7dd3fc;
+ }
+ 
+ :host([use-white-tile-icon_]) .query-tile-icon {
+@@ -99,31 +100,37 @@
+ #addShortcut {
+   -webkit-tap-highlight-color: transparent;
+   align-items: center;
+-  border-radius: 4px;
++  border-radius: 13px !important;
+   box-sizing: border-box;
+   cursor: pointer;
+   display: flex;
+   flex-direction: column;
+-  height: var(--tile-size);
++  height: 74px !important;
++  width: 72px !important;
++  padding: 8px 4px 5px !important;
+   opacity: 1;
+   outline: none;
+   position: relative;
+   text-decoration: none;
+-  transition-duration: 300ms;
+-  transition-property: left, top;
+-  transition-timing-function: ease-in-out;
++  background: linear-gradient(165deg, rgba(14, 21, 40, 0.68) 0%, rgba(6, 10, 22, 0.82) 100%) !important;
++  border: 1px solid rgba(148, 185, 255, 0.16) !important;
++  backdrop-filter: blur(16px) saturate(140%) !important;
++  -webkit-backdrop-filter: blur(16px) saturate(140%) !important;
++  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.09) !important;
++  transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1), border-color 0.22s ease, box-shadow 0.22s ease, background 0.22s ease !important;
+   user-select: none;
+-  width: var(--tile-size);
+ }
+ 
+ .tile a {
+-  border-radius: 4px;
++  border-radius: 13px;
+   display: inline-block;
++  inset: 0;
+   height: 100%;
+   outline: none;
+   position: absolute;
+   touch-action: none;
+   width: 100%;
++  z-index: 1;
+ }
+ 
+ :host-context(.focus-outline-visible) .tile a:focus,
+@@ -134,61 +141,77 @@
+ @media (forced-colors: active) {
+   :host-context(.focus-outline-visible) .tile a:focus,
+   :host-context(.focus-outline-visible) #addShortcut:focus {
+-    /* Use outline instead of box-shadow (which does not work) in Windows
+-        HCM. */
+     outline: var(--cr-focus-outline-hcm);
+   }
+ }
+ 
+ #addShortcut {
+-  background-color: transparent;
+-  border: none;
+-  box-shadow: none;
+   justify-content: unset;
+-  padding: 0;
+ }
+ 
+ :host(:not([reordering_])) .tile:hover,
+ :host(:not([reordering_])) #addShortcut:hover,
+ .force-hover {
+-  background-color: var(--tile-hover-color);
++  transform: translateY(-3px) !important;
++  background: linear-gradient(165deg, rgba(22, 34, 62, 0.78) 0%, rgba(10, 16, 32, 0.90) 100%) !important;
++  border-color: rgba(125, 185, 255, 0.44) !important;
++  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.52), 0 0 16px rgba(96, 165, 250, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.18) !important;
+ }
+ 
+ .tile-icon {
+   align-items: center;
+-  background-color: var(--tile-background-color);
+-  border-radius: 50%;
++  background: linear-gradient(145deg, rgba(255, 255, 255, 0.09) 0%, rgba(255, 255, 255, 0.02) 100%) !important;
++  border: 1px solid rgba(255, 255, 255, 0.11) !important;
++  border-radius: 10px !important;
+   display: flex;
+   flex-shrink: 0;
+   height: var(--icon-size);
+   justify-content: center;
+-  margin-top: 16px;
++  margin-top: 1px;
+   width: var(--icon-size);
++  position: relative;
++  z-index: 2;
++  pointer-events: none;
++  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 2px 6px rgba(0, 0, 0, 0.28) !important;
++  transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1), border-color 0.22s ease !important;
++}
++
++:host(:not([reordering_])) .tile:hover .tile-icon,
++:host(:not([reordering_])) #addShortcut:hover .tile-icon {
++  transform: scale(1.05);
++  border-color: rgba(148, 197, 255, 0.32) !important;
+ }
+ 
+ .tile-icon img {
+-  height: 24px;
+-  width: 24px;
++  height: 20px;
++  width: 20px;
++  border-radius: 5px;
++  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.35));
+ }
+ 
+ .tile-title {
+   align-items: center;
+-  border-radius: calc(var(--title-height) / 2 + 2px);
+-  color: var(--most-visited-text-color);
++  color: #dbe7f6 !important;
+   display: flex;
+   height: var(--title-height);
+-  line-height: calc(var(--title-height) / 2);
+-  margin-top: 6px;
+-  padding: 2px 8px;
+-  width: 88px;
++  line-height: 1.2;
++  margin-top: 5px;
++  padding: 0 2px;
++  width: 64px;
++  position: relative;
++  z-index: 2;
++  pointer-events: none;
++  background-color: transparent !important;
+ }
+ 
+ .tile-title span {
+-  font-weight: 400;
++  font-size: 10.5px;
++  font-weight: 600;
++  letter-spacing: 0.15px;
+   overflow: hidden;
+   text-align: center;
+   text-overflow: ellipsis;
+-  text-shadow: var(--most-visited-text-shadow);
++  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.65) !important;
+   white-space: nowrap;
+   width: 100%;
+ }
+@@ -215,33 +238,43 @@
+ }
+ 
+ cr-icon-button {
+-  --cr-icon-button-fill-color: var(--icon-button-color);
+-  --cr-icon-button-size: 28px;
++  --cr-icon-button-fill-color: #cbd5e1;
++  --cr-icon-button-icon-size: 12px;
++  --cr-icon-button-size: 18px;
++  --cr-icon-button-hover-background-color: rgba(59, 130, 246, 0.35);
++  --cr-icon-button-active-background-color: rgba(59, 130, 246, 0.50);
+   --cr-icon-button-transition: none;
+-  margin: 4px 2px;
++  background: rgba(8, 13, 26, 0.86);
++  border: 1px solid rgba(148, 185, 255, 0.28);
++  border-radius: 50%;
++  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
++  margin: 0;
+   opacity: 0;
+   position: absolute;
+-  right: 0;
+-  top: 0;
+-  transition: opacity 100ms ease-in-out;
++  right: 3px;
++  top: 3px;
++  z-index: 10;
++  transition: opacity 120ms ease-in-out, transform 120ms ease-in-out, border-color 120ms ease;
+ }
+ 
+ :host-context([dir=rtl]) cr-icon-button {
+-  left: 0;
++  left: 3px;
+   right: unset;
+ }
+ 
+ :host(:not([reordering_])) .tile:hover cr-icon-button,
+ .force-hover cr-icon-button {
+   opacity: 1;
+-  transition-delay: 400ms;
++  transition-delay: 150ms;
+ }
+ 
+ :host(:not([reordering_])) cr-icon-button:active,
+ :host-context(.focus-outline-visible):host(:not([reordering_]))
+     cr-icon-button:focus,
+ :host(:not([reordering_])) cr-icon-button:hover {
+-  --cr-icon-button-fill-color: var(--icon-button-color-active);
++  --cr-icon-button-fill-color: #ffffff;
++  border-color: rgba(125, 185, 255, 0.65);
++  transform: scale(1.08);
+   opacity: 1;
+   transition-delay: 0s;
+ }
