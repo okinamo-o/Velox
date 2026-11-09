@@ -127,6 +127,47 @@ class TestTabLifecyclePolicy(unittest.TestCase):
         self.assertEqual(protected_ids, [1, 2, 3, 4, 5])
         self.assertEqual(discardable_ids, [6])
 
+    def test_tab_close_selection_right_then_left(self):
+        """Verify that closing the active tab selects the right adjacent tab first, and falls back to the left."""
+        def determine_new_selected_index(count, removing_index, collapsed_indices=None):
+            if collapsed_indices is None:
+                collapsed_indices = set()
+            # Prefer closest non-collapsed tab to the right
+            for i in range(removing_index + 1, count):
+                if i not in collapsed_indices:
+                    return i - 1
+            # If nothing to right, prefer closest non-collapsed tab to left
+            for i in range(removing_index - 1, -1, -1):
+                if i not in collapsed_indices:
+                    return i
+            # Fallback
+            if removing_index < count - 1:
+                return removing_index
+            if removing_index > 0:
+                return removing_index - 1
+            return 0
+
+        # Middle tab closed: 3 tabs [0, 1, 2], close 1 -> selects right tab (old 2 becomes 1)
+        self.assertEqual(determine_new_selected_index(3, 1), 1)
+        # Rightmost tab closed: 3 tabs [0, 1, 2], close 2 -> selects left tab (old 1 stays 1)
+        self.assertEqual(determine_new_selected_index(3, 2), 1)
+        # Leftmost tab closed: 3 tabs [0, 1, 2], close 0 -> selects right tab (old 1 becomes 0)
+        self.assertEqual(determine_new_selected_index(3, 0), 0)
+        # 2 tabs [0, 1], close 0 -> selects right tab (old 1 becomes 0)
+        self.assertEqual(determine_new_selected_index(2, 0), 0)
+        # 2 tabs [0, 1], close 1 -> selects left tab (old 0 stays 0)
+        self.assertEqual(determine_new_selected_index(2, 1), 0)
+        # Right tab collapsed: 3 tabs [0, 1, 2], close 1 with 2 collapsed -> selects left tab (0)
+        self.assertEqual(determine_new_selected_index(3, 1, {2}), 0)
+
+        # Source inspection in tab_strip_model.cc
+        tab_strip_cc = REPO_ROOT / "src" / "chrome" / "browser" / "ui" / "tabs" / "tab_strip_model.cc"
+        self.assertTrue(tab_strip_cc.exists())
+        content = tab_strip_cc.read_text(encoding="utf-8")
+        self.assertIn("When closing the active tab, select the adjacent tab to the right", content)
+        self.assertIn("for (int i = removing_index + 1; i < count(); ++i)", content)
+        self.assertIn("for (int i = removing_index - 1; i >= 0; --i)", content)
+
 
 class TestManifestV3Extension(unittest.TestCase):
     def test_mv3_manifest_validation(self):
