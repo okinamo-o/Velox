@@ -1,19 +1,19 @@
 {
     "product":  "Velox Browser",
-    "version":  "134.0.6998.186",
+    "version":  "134.0.6998.187",
     "channel":  "stable",
-    "release_date":  "2026-11-09T20:55:49Z",
+    "release_date":  "2026-11-09T22:17:41Z",
     "installer":  {
                       "filename":  "VeloxSetup.exe",
-                      "sha256":  "40DF7F8ED5A9CCE7478922FF6339D4E0CB645B29BD610EB11EE9ACA166FF4246",
-                      "size_bytes":  143130976,
-                      "download_url":  "https://github.com/okinamo-o/Velox/releases/download/v134.0.6998.186/VeloxSetup.exe",
-                      "signature":  "G7h9RIlvSKdMqPGcsuTkYBhN7TfhysWrvUCqqGAWctNYwR9HXA4gLZvDEPlbQKQCFAEH5JYXw2kepxE+g+I377POV+WFrIXKLskToadFV5pTvCBRFGvB91wcSQvyvAqr5n2Lek9PvH+TdEB2G2D+KvLoCM+FOd0OxGBS4prwl7bjbn4ijEOd9+KGaGDzuERP+Yexh5OKytRTcVD4W+zJZ4oUgnq40LGg6c/rD1yTDXdVu+RaWm9ETdCAJtnKvGma9u00NKCTXj5t8uWZz4dRdPOA8gK5q4v/lT/eexOPVfFsRExH+w22YSbrLZ6NcxQbDjfrXBybrAUFjV4Sydx28A=="
+                      "sha256":  "A72862862EEAD38E455898766DAE88C7D20D16E88BC15ECD3F463F6ABB94EE28",
+                      "size_bytes":  143128416,
+                      "download_url":  "https://github.com/okinamo-o/Velox/releases/download/v134.0.6998.187/VeloxSetup.exe",
+                      "signature":  "frOAfVUu8qigeDn6fDOqwxsX8LL3CNXyvEsDvKP/XiZseoHUunip4NrlLbJgeq2nb+1qJE8+ee5gRn8l9AQ8XDuykEJu04bN3t5HQsQK9NoEXwi7pU/aaigAFtxx3T832m7cACgjUQtyQlEiDtmWxVPw0un6Sc+q0AcBi/yL1mfNO6JuBblJaqK354vkuHdMORmWkX+UxBxdmrRn48s7pOx+t/Eicl11jJ+gpnp4Z9UmF5Aqm+y9LBMyVook5QIPJ3lPMdJ+9ODQYWaibqrp2r181X68K7l2VItYz56mXEhK6qbo76DVzVMZjmo8XJvGTJNbtwYC1rRNHnI7Jwd4xw=="
                   },
     "portable":  {
-                     "filename":  "Velox-v134.0.6998.186-Portable-x64.zip",
-                     "sha256":  "BEB3E0E2D4AD163A1874E747638FC55594753A5E89BD338D200D61B35DC1C4A4",
-                     "download_url":  "https://github.com/okinamo-o/Velox/releases/download/v134.0.6998.186/Velox-v134.0.6998.186-Portable-x64.zip"
+                     "filename":  "Velox-v134.0.6998.187-Portable-x64.zip",
+                     "sha256":  "B54C2C2D8C69936DEEC01A37ADBC65B41AFC051D698B8BC9859075DA41D01A11",
+                     "download_url":  "https://github.com/okinamo-o/Velox/releases/download/v134.0.6998.187/Velox-v134.0.6998.187-Portable-x64.zip"
                  },
     "notes":  [
                   "🔮 Cyber-Glass Tab Context Menu: Midnight glow frame, floating pills, keycap shortcut badges \u0026 crisp action icons",

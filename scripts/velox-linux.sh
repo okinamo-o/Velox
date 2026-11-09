@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# ⚡ VELOX BROWSER - Linux Quick-Start & Build Helper
+# ⚡ VELOX BROWSER - Linux Quick-Start, Auto-Updater & Build Helper
 # https://github.com/okinamo-o/Velox
 # ==============================================================================
 set -e
@@ -17,17 +17,19 @@ echo -e "${CYAN}====================================================${NC}"
 
 show_menu() {
     echo -e "Please select an option:"
-    echo -e "  ${GREEN}1)${NC} Run Velox via Wine / Proton (Instant, No Compile Required)"
-    echo -e "  ${GREEN}2)${NC} Build Native Linux Velox from Source (Requires ~80GB & C++ tools)"
-    echo -e "  ${GREEN}3)${NC} Create Desktop Launcher (.desktop) for Velox"
-    echo -e "  ${GREEN}4)${NC} Exit"
+    echo -e "  ${GREEN}1)${NC} Install / Update Velox via Wine / Proton (Instant, No Compile Required)"
+    echo -e "  ${GREEN}2)${NC} Check & Apply Latest Velox Update In-Place (Preserves Tabs & Profile)"
+    echo -e "  ${GREEN}3)${NC} Build Native Linux Velox from Source (Requires ~80GB & C++ tools)"
+    echo -e "  ${GREEN}4)${NC} Create Desktop Launcher (.desktop) for Velox"
+    echo -e "  ${GREEN}5)${NC} Exit"
     echo ""
-    read -rp "Enter choice [1-4]: " choice
+    read -rp "Enter choice [1-5]: " choice
     case "$choice" in
         1) install_wine_runner ;;
-        2) build_native_linux ;;
-        3) create_desktop_entry ;;
-        4) exit 0 ;;
+        2) update_velox_linux ;;
+        3) build_native_linux ;;
+        4) create_desktop_entry ;;
+        5) exit 0 ;;
         *) echo -e "${RED}Invalid option.${NC}"; exit 1 ;;
     esac
 }
@@ -37,9 +39,9 @@ install_wine_runner() {
     if ! command -v wine &> /dev/null; then
         echo -e "${RED}[!] Wine is not installed.${NC}"
         echo "Please install wine first:"
-        echo "  Ubuntu/Debian: sudo apt install wine"
-        echo "  Arch Linux:    sudo pacman -S wine"
-        echo "  Fedora:        sudo dnf install wine"
+        echo "  Ubuntu/Debian/Zorin OS: sudo apt update && sudo apt install -y wine curl unzip"
+        echo "  Arch Linux:             sudo pacman -S wine curl unzip"
+        echo "  Fedora:                 sudo dnf install wine curl unzip"
         exit 1
     fi
 
@@ -47,29 +49,37 @@ install_wine_runner() {
     mkdir -p "$INSTALL_DIR"
 
     echo -e "${GREEN}[*] Fetching latest Velox release info from GitHub...${NC}"
-    LATEST_JSON=$(curl -sSL "https://raw.githubusercontent.com/okinamo-o/Velox/main/dist/version.json")
+    LATEST_JSON=$(curl -fsSL "https://raw.githubusercontent.com/okinamo-o/Velox/main/dist/version.json?t=$(date +%s)")
     DOWNLOAD_URL=$(echo "$LATEST_JSON" | grep -o 'https://[^"]*Portable-x64.zip' | head -n 1)
     VERSION=$(echo "$LATEST_JSON" | grep -o '"version": *"[^"]*"' | head -n 1 | cut -d '"' -f 4)
 
     if [ -z "$DOWNLOAD_URL" ]; then
         DOWNLOAD_URL="https://github.com/okinamo-o/Velox/releases/latest/download/VeloxSetup.exe"
         echo -e "${YELLOW}[*] Downloading Velox installer...${NC}"
-        curl -L "$DOWNLOAD_URL" -o "$INSTALL_DIR/VeloxSetup.exe"
+        curl -fL "$DOWNLOAD_URL" -o "$INSTALL_DIR/VeloxSetup.exe"
         echo -e "${GREEN}[*] Launching installer with Wine...${NC}"
         wine "$INSTALL_DIR/VeloxSetup.exe"
     else
         echo -e "${GREEN}[*] Downloading Velox v$VERSION Portable...${NC}"
-        curl -L "$DOWNLOAD_URL" -o "$INSTALL_DIR/velox-portable.zip"
-        echo -e "${GREEN}[*] Extracting...${NC}"
+        curl -fL "$DOWNLOAD_URL" -o "$INSTALL_DIR/velox-portable.zip"
+        echo -e "${GREEN}[*] Extracting Velox v$VERSION...${NC}"
         unzip -q -o "$INSTALL_DIR/velox-portable.zip" -d "$INSTALL_DIR"
         rm -f "$INSTALL_DIR/velox-portable.zip"
+        echo "$VERSION" > "$INSTALL_DIR/VERSION"
 
-        # Create runner script
+        # Create runner script that also syncs any staged in-app updates
         cat << 'EOF' > "$INSTALL_DIR/velox"
 #!/usr/bin/env bash
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export WINEPREFIX="$HOME/.local/share/velox/wineprefix"
-wine "$SCRIPT_DIR/chrome.exe" "$@"
+APP_DIR="$WINEPREFIX/drive_c/users/$USER/AppData/Local/Velox/Application"
+if [ -d "$APP_DIR" ] && [ -f "$APP_DIR/chrome.exe" ]; then
+    exec wine "$APP_DIR/chrome.exe" "$@"
+elif [ -f "$SCRIPT_DIR/velox.exe" ]; then
+    exec wine "$SCRIPT_DIR/velox.exe" "$@"
+else
+    exec wine "$SCRIPT_DIR/chrome.exe" "$@"
+fi
 EOF
         chmod +x "$INSTALL_DIR/velox"
         
@@ -78,8 +88,24 @@ EOF
         ln -sf "$INSTALL_DIR/velox" "$HOME/.local/bin/velox"
 
         create_desktop_entry
-        echo -e "\n${GREEN}[✓] Velox installed successfully! You can launch it by running 'velox' or from your application menu.${NC}"
+        echo -e "\n${GREEN}[✓] Velox v$VERSION installed successfully! Launch it with 'velox' or from your application menu.${NC}"
     fi
+}
+
+update_velox_linux() {
+    INSTALL_DIR="$HOME/.local/share/velox"
+    mkdir -p "$INSTALL_DIR"
+    LOCAL_VER="none"
+    if [ -f "$INSTALL_DIR/VERSION" ]; then
+        LOCAL_VER=$(cat "$INSTALL_DIR/VERSION" | tr -d '[:space:]')
+    fi
+
+    echo -e "${GREEN}[*] Checking GitHub for Velox updates (Installed: $LOCAL_VER)...${NC}"
+    LATEST_JSON=$(curl -fsSL "https://raw.githubusercontent.com/okinamo-o/Velox/main/dist/version.json?t=$(date +%s)")
+    VERSION=$(echo "$LATEST_JSON" | grep -o '"version": *"[^"]*"' | head -n 1 | cut -d '"' -f 4)
+    echo -e "${CYAN}[*] Latest Remote Version: v$VERSION${NC}"
+
+    install_wine_runner
 }
 
 create_desktop_entry() {
@@ -115,7 +141,7 @@ build_native_linux() {
     echo -e "${CYAN}====================================================${NC}"
     echo -e "To compile native Velox on Linux, follow these steps:"
     echo ""
-    echo -e "${YELLOW}1. Install system prerequisites (Ubuntu/Debian):${NC}"
+    echo -e "${YELLOW}1. Install system prerequisites (Ubuntu/Debian/Zorin OS):${NC}"
     echo "   sudo apt update && sudo apt install -y git python3 curl build-essential lsb-release"
     echo ""
     echo -e "${YELLOW}2. Install Google depot_tools:${NC}"
@@ -139,9 +165,11 @@ build_native_linux() {
     echo -e "${GREEN}[*] For full documentation, visit: https://github.com/okinamo-o/Velox${NC}"
 }
 
-# If script run with --wine or --build flags
+# If script run with flags
 if [ "$1" == "--wine" ] || [ "$1" == "-w" ]; then
     install_wine_runner
+elif [ "$1" == "--update" ] || [ "$1" == "-u" ]; then
+    update_velox_linux
 elif [ "$1" == "--build" ] || [ "$1" == "-b" ]; then
     build_native_linux
 else
