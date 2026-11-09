@@ -2,17 +2,17 @@
     "product":  "Velox Browser",
     "version":  "134.0.6998.186",
     "channel":  "stable",
-    "release_date":  "2026-11-07T00:26:45Z",
+    "release_date":  "2026-11-09T20:55:49Z",
     "installer":  {
                       "filename":  "VeloxSetup.exe",
-                      "sha256":  "2ECC01C9D9046ED62E8A250160715D1C6E1485531FA31D2FADA534B8E0EB8610",
-                      "size_bytes":  142338400,
+                      "sha256":  "40DF7F8ED5A9CCE7478922FF6339D4E0CB645B29BD610EB11EE9ACA166FF4246",
+                      "size_bytes":  143130976,
                       "download_url":  "https://github.com/okinamo-o/Velox/releases/download/v134.0.6998.186/VeloxSetup.exe",
-                      "signature":  "aG0rH3Y7BvwhoZCk7YggwF51SUOORNZWTkhZsCm6GlyWecdqMxwn3B3q2Ssez9/dkDUlmVAxMa2nkU/2gsyPgw468yaAn+1jE8iAsxI/Uwk6VngxUnIfMKxWtzX4msJi5C3wMockojJn0R2iWl4ipeXEZd/rM9cxmlsi8Mlxe1Ot0nRqjahgkkEtF/St6UMtrfWgOcC0R5rAiFVP/b/Dey3bcScpmcHYbZh/zX9l1T3bEXUiEUfIgC/gL2jYMmt0yyv8MSr1e6eY6P6zOoVEuTXrU6p+/UxuPUIJzrt3o/Ss2baPGWNy8SqUewfpYcl7jhlG/q4jkFFWjdfnt/Z/Nw=="
+                      "signature":  "G7h9RIlvSKdMqPGcsuTkYBhN7TfhysWrvUCqqGAWctNYwR9HXA4gLZvDEPlbQKQCFAEH5JYXw2kepxE+g+I377POV+WFrIXKLskToadFV5pTvCBRFGvB91wcSQvyvAqr5n2Lek9PvH+TdEB2G2D+KvLoCM+FOd0OxGBS4prwl7bjbn4ijEOd9+KGaGDzuERP+Yexh5OKytRTcVD4W+zJZ4oUgnq40LGg6c/rD1yTDXdVu+RaWm9ETdCAJtnKvGma9u00NKCTXj5t8uWZz4dRdPOA8gK5q4v/lT/eexOPVfFsRExH+w22YSbrLZ6NcxQbDjfrXBybrAUFjV4Sydx28A=="
                   },
     "portable":  {
                      "filename":  "Velox-v134.0.6998.186-Portable-x64.zip",
-                     "sha256":  "0F2E6DE564FDD1F876FE42EF2B78C865186F02B7405CF56FA17756C6C2A7D682",
+                     "sha256":  "BEB3E0E2D4AD163A1874E747638FC55594753A5E89BD338D200D61B35DC1C4A4",
                      "download_url":  "https://github.com/okinamo-o/Velox/releases/download/v134.0.6998.186/Velox-v134.0.6998.186-Portable-x64.zip"
                  },
     "notes":  [
