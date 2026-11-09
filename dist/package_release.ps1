@@ -84,10 +84,6 @@ if (Test-Path $AppDir) {
     Copy-Item "$AppDir\*" -Destination $TempPortable -Recurse -Exclude "*.log","*.dmp","*.old" -Force
     Get-ChildItem -Path $TempPortable -Directory | Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' -and $_.Name -ne $Version } | Remove-Item -Recurse -Force
     if (Test-Path "$TempPortable\old_chrome.exe") { Remove-Item "$TempPortable\old_chrome.exe" -Force }
-    if (!(Test-Path "$TempPortable\chrome_elf.dll") -and (Test-Path "$TempPortable\$Version\chrome_elf.dll")) {
-        Copy-Item "$TempPortable\$Version\chrome_elf.dll" "$TempPortable\chrome_elf.dll" -Force
-    }
-    Get-ChildItem -Path $TempPortable -Filter "*.*.*.*.manifest" | Remove-Item -Force -ErrorAction SilentlyContinue
     Compress-Archive -Path "$TempPortable\*" -DestinationPath $PortableZip -CompressionLevel Optimal
     Remove-Item $TempPortable -Recurse -Force
     

@@ -2530,10 +2530,10 @@ index 90216e4212..a8d765fe0a 100644
        base::BindOnce(&GetInstalledVersionSynchronous), std::move(callback));
  }
 diff --git a/chrome/browser/upgrade_detector/get_installed_version_win.cc b/chrome/browser/upgrade_detector/get_installed_version_win.cc
-index 73c041edd5..2c0c1ef7a5 100644
+index 73c041edd5..fcad45c733 100644
 --- a/chrome/browser/upgrade_detector/get_installed_version_win.cc
 +++ b/chrome/browser/upgrade_detector/get_installed_version_win.cc
-@@ -4,36 +4,609 @@
+@@ -4,36 +4,613 @@
  
  #include "chrome/browser/upgrade_detector/get_installed_version.h"
  
@@ -2868,7 +2868,11 @@ index 73c041edd5..2c0c1ef7a5 100644
 +  }
 +
 +  EnsureVersionManifestFile(target_ver_dir, ver_str);
-+  EnsureVersionManifestFile(exe_dir, ver_str);
++  // Ensure no root-level manifest exists in exe_dir when using a versioned
++  // subdirectory, so Windows SxS resolves chrome_elf.dll inside target_ver_dir.
++  if (!base::PathExists(exe_dir.Append(L"chrome.dll"))) {
++    base::DeleteFile(exe_dir.AppendASCII(ver_str + ".manifest"));
++  }
 +
 +  // If running from a flat Portable/Wine directory (where chrome.dll is also in
 +  // exe_dir), stage the updated core files into exe_dir as well.
