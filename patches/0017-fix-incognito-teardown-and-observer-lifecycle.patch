@@ -247,10 +247,10 @@ index 76c889780c..db0f56e3f2 100644
  int BrowserView::GetCommandIDForAppCommandID(int app_command_id) const {
 diff --git a/chrome/browser/ui/views/frame/velox_auto_hide_controller.cc b/chrome/browser/ui/views/frame/velox_auto_hide_controller.cc
 new file mode 100644
-index 0000000000..5c20c941b7
+index 0000000000..6f4aebe384
 --- /dev/null
 +++ b/chrome/browser/ui/views/frame/velox_auto_hide_controller.cc
-@@ -0,0 +1,628 @@
+@@ -0,0 +1,867 @@
 +// Copyright 2026 The Chromium Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -270,19 +270,27 @@ index 0000000000..5c20c941b7
 +#include "chrome/browser/ui/views/frame/browser_view.h"
 +#include "chrome/browser/ui/views/frame/top_container_view.h"
 +#include "chrome/browser/ui/views/location_bar/location_bar_view.h"
++#include "chrome/browser/ui/views/omnibox/omnibox_view_views.h"
 +#include "chrome/browser/ui/views/tabs/dragging/tab_drag_context.h"
 +#include "chrome/browser/ui/views/tabs/tab_strip.h"
 +#include "components/fullscreen_control/subtle_notification_view.h"
++#include "components/omnibox/browser/omnibox_edit_model.h"
 +#include "content/public/browser/web_contents.h"
++#include "ui/aura/client/window_types.h"
++#include "ui/aura/window.h"
++#include "ui/base/mojom/ui_base_types.mojom-shared.h"
 +#include "ui/compositor/layer.h"
 +#include "ui/display/screen.h"
 +#include "ui/events/event.h"
 +#include "ui/gfx/animation/slide_animation.h"
++#include "ui/gfx/geometry/insets.h"
 +#include "ui/message_center/public/cpp/notification.h"
++#include "ui/views/bubble/bubble_dialog_delegate_view.h"
 +#include "ui/views/controls/menu/menu_controller.h"
 +#include "ui/views/event_monitor.h"
 +#include "ui/views/focus/focus_manager.h"
 +#include "ui/views/widget/widget.h"
++#include "ui/views/widget/widget_delegate.h"
 +
 +namespace {
 +
@@ -313,6 +321,13 @@ index 0000000000..5c20c941b7
 +  views::Widget* widget = browser_view_->GetWidget();
 +  if (widget && !widget_observation_.IsObserving()) {
 +    widget_observation_.Observe(widget);
++  }
++  if (widget && widget->GetNativeView()) {
++    views::Widget::Widgets owned_widgets;
++    views::Widget::GetAllOwnedWidgets(widget->GetNativeView(), &owned_widgets);
++    for (views::Widget* owned : owned_widgets) {
++      ObserveChildWidget(owned);
++    }
 +  }
 +
 +  // Create event monitor for mouse movements across the application.
@@ -367,6 +382,8 @@ index 0000000000..5c20c941b7
 +    focus_manager_->RemoveFocusChangeListener(this);
 +    focus_manager_ = nullptr;
 +  }
++  child_widget_observations_.RemoveAllObservations();
++  child_widgets_.clear();
 +  widget_observation_.Reset();
 +}
 +
@@ -509,25 +526,151 @@ index 0000000000..5c20c941b7
 +      return false;
 +    }
 +  }
++  // Keep top bar visible while user is selecting the second tab for split view
++  if (browser_view_ && browser_view_->browser() &&
++      browser_view_->browser()->tab_strip_model() &&
++      browser_view_->browser()->tab_strip_model()->IsSplitSelectionActive()) {
++    return false;
++  }
++  // Keep top bar revealed while a header-anchored bubble, popup, or omnibox
++  // dropdown is open so interacting with it never leaves it floating alone.
++  if (HasActiveHeaderPopupOrBubble()) {
++    return false;
++  }
 +  return true;
 +}
 +
-+void VeloxAutoHideController::CheckMousePosition() {
-+  if (!is_enabled_ || !browser_view_ || !browser_view_->GetWidget() ||
-+      !display::Screen::GetScreen()) {
++void VeloxAutoHideController::ObserveChildWidget(views::Widget* child_widget) {
++  if (!child_widget || child_widget == fullscreen_toast_widget_ ||
++      (browser_view_ && child_widget == browser_view_->GetWidget()) ||
++      child_widget->IsClosed()) {
 +    return;
 +  }
-+  // Only check if window is visible and not minimized
-+  if (!browser_view_->GetWidget()->IsVisible() ||
-+      browser_view_->GetWidget()->IsMinimized()) {
++  if (!child_widget_observations_.IsObservingSource(child_widget)) {
++    child_widget_observations_.AddObservation(child_widget);
++  }
++  child_widgets_.insert(child_widget);
++}
++
++void VeloxAutoHideController::UnobserveChildWidget(
++    views::Widget* child_widget) {
++  if (!child_widget) {
 +    return;
 +  }
-+  if (browser_view_->IsFullscreen()) {
-+    return;
++  child_widgets_.erase(child_widget);
++  if (child_widget_observations_.IsObservingSource(child_widget)) {
++    child_widget_observations_.RemoveObservation(child_widget);
++  }
++}
++
++bool VeloxAutoHideController::IsHeaderRelatedWidget(const views::Widget* widget,
++                                                    int depth) const {
++  if (depth > 8 || !widget || !browser_view_ ||
++      widget == fullscreen_toast_widget_ ||
++      widget == browser_view_->GetWidget() || widget->IsClosed() ||
++      !widget->IsVisible()) {
++    return false;
 +  }
 +
++  // Exclude non-header browser overlays so link hover previews and in-page
++  // find don't pin the auto-hide bar open.
++  const std::string& name = widget->GetName();
++  if (name == "StatusBubble" || name == "FindBarHost") {
++    return false;
++  }
++
++  // Exclude web-contents modal dialogs (alert(), HTTP auth, file prompts).
++  const views::WidgetDelegate* delegate = widget->widget_delegate();
++  if (delegate && delegate->GetModalType() == ui::mojom::ModalType::kChild) {
++    return false;
++  }
++
++  if (name == "RoundedOmniboxResultsFrame") {
++    return true;
++  }
++
++  if (widget->GetNativeWindow() &&
++      widget->GetNativeWindow()->GetType() == aura::client::WINDOW_TYPE_MENU) {
++    return true;
++  }
++
++  if (delegate) {
++    if (auto* bubble = const_cast<views::WidgetDelegate*>(delegate)
++                           ->AsBubbleDialogDelegate()) {
++      const views::View* anchor = bubble->GetAnchorView();
++      if (anchor) {
++        if (browser_view_->top_container() &&
++            browser_view_->top_container()->Contains(anchor)) {
++          return true;
++        }
++        const views::Widget* anchor_widget = anchor->GetWidget();
++        if (anchor_widget && anchor_widget != browser_view_->GetWidget() &&
++            child_widgets_.contains(
++                const_cast<views::Widget*>(anchor_widget))) {
++          return IsHeaderRelatedWidget(anchor_widget, depth + 1);
++        }
++      } else if (bubble->anchor_widget() == browser_view_->GetWidget() &&
++                 browser_view_->top_container()) {
++        gfx::Rect top_bounds =
++            browser_view_->top_container()->GetBoundsInScreen();
++        top_bounds.Inset(gfx::Insets::TLBR(-8, 0, -24, 0));
++        if (bubble->GetAnchorRect().Intersects(top_bounds)) {
++          return true;
++        }
++      }
++    }
++  }
++
++  // Inherit header affinity for nested popups (e.g., <select> or sub-dialogs)
++  // opened from inside a tracked header bubble.
++  const views::Widget* parent = const_cast<views::Widget*>(widget)->parent();
++  if (parent && parent != browser_view_->GetWidget() &&
++      child_widgets_.contains(const_cast<views::Widget*>(parent))) {
++    return IsHeaderRelatedWidget(parent, depth + 1);
++  }
++
++  return false;
++}
++
++bool VeloxAutoHideController::HasActiveHeaderPopupOrBubble() const {
++  if (browser_view_) {
++    if (LocationBarView* location_bar = browser_view_->GetLocationBarView()) {
++      if (const OmniboxViewViews* omnibox = location_bar->omnibox_view();
++          omnibox && omnibox->model() && omnibox->model()->PopupIsOpen()) {
++        return true;
++      }
++    }
++  }
++
++  for (views::Widget* child : child_widgets_) {
++    if (IsHeaderRelatedWidget(child)) {
++      return true;
++    }
++  }
++  return false;
++}
++
++bool VeloxAutoHideController::IsCursorOverHeaderPopup(
++    const gfx::Point& screen_loc) const {
++  for (views::Widget* child : child_widgets_) {
++    if (IsHeaderRelatedWidget(child) &&
++        child->GetWindowBoundsInScreen().Contains(screen_loc)) {
++      return true;
++    }
++  }
++  return false;
++}
++
++bool VeloxAutoHideController::IsCursorOverTopBar(const gfx::Point& screen_loc,
++                                                 bool* out_at_top_edge) const {
 +  display::Screen* screen = display::Screen::GetScreen();
-+  gfx::Point screen_loc = screen->GetCursorScreenPoint();
++  if (!browser_view_ || !screen || !browser_view_->GetNativeWindow()) {
++    if (out_at_top_edge) {
++      *out_at_top_edge = false;
++    }
++    return false;
++  }
++
 +  gfx::Point view_loc = screen_loc;
 +  views::View::ConvertPointFromScreen(browser_view_, &view_loc);
 +
@@ -549,12 +692,50 @@ index 0000000000..5c20c941b7
 +  } else {
 +    at_top_edge = within_x && (view_loc.y() >= -10 && view_loc.y() <= 1);
 +  }
++  if (out_at_top_edge) {
++    *out_at_top_edge = at_top_edge;
++  }
 +
 +  int visible_bar_height = static_cast<int>(bar_height * reveal_fraction_);
 +  bool over_top_bar = within_x && view_loc.y() >= -25 &&
 +                      view_loc.y() <= visible_bar_height + kTopBarOvershootBuffer;
++  return at_top_edge || (reveal_fraction_ > 0.0 && over_top_bar);
++}
 +
-+  if (at_top_edge || (reveal_fraction_ > 0.0 && over_top_bar)) {
++void VeloxAutoHideController::ScheduleHideIfNeeded() {
++  if (!is_enabled_ || reveal_fraction_ <= 0.0) {
++    return;
++  }
++  if (!hide_debounce_timer_.IsRunning() && CanHide()) {
++    hide_debounce_timer_.Start(
++        FROM_HERE, base::Milliseconds(kHideDebounceDelayMs),
++        base::BindOnce(&VeloxAutoHideController::Hide,
++                       weak_factory_.GetWeakPtr(), true));
++  }
++}
++
++void VeloxAutoHideController::CheckMousePosition() {
++  if (!is_enabled_ || !browser_view_ || !browser_view_->GetWidget() ||
++      !display::Screen::GetScreen()) {
++    return;
++  }
++  // Only check if window is visible and not minimized
++  if (!browser_view_->GetWidget()->IsVisible() ||
++      browser_view_->GetWidget()->IsMinimized()) {
++    return;
++  }
++  if (browser_view_->IsFullscreen()) {
++    return;
++  }
++
++  gfx::Point screen_loc =
++      display::Screen::GetScreen()->GetCursorScreenPoint();
++  bool at_top_edge = false;
++  bool over_top_bar = IsCursorOverTopBar(screen_loc, &at_top_edge);
++  bool over_header_popup =
++      reveal_fraction_ > 0.0 && IsCursorOverHeaderPopup(screen_loc);
++
++  if (over_top_bar || over_header_popup) {
 +    mouse_hovering_ = true;
 +    hide_debounce_timer_.Stop();
 +    if (at_top_edge && reveal_fraction_ < 1.0) {
@@ -562,12 +743,7 @@ index 0000000000..5c20c941b7
 +    }
 +  } else {
 +    mouse_hovering_ = false;
-+    if (reveal_fraction_ > 0.0 && !hide_debounce_timer_.IsRunning() && CanHide()) {
-+      hide_debounce_timer_.Start(
-+          FROM_HERE, base::Milliseconds(kHideDebounceDelayMs),
-+          base::BindOnce(&VeloxAutoHideController::Hide,
-+                          weak_factory_.GetWeakPtr(), true));
-+    }
++    ScheduleHideIfNeeded();
 +  }
 +}
 +
@@ -595,13 +771,18 @@ index 0000000000..5c20c941b7
 +  }
 +
 +  if (event.type() == ui::EventType::kMouseExited) {
-+    mouse_hovering_ = false;
-+    if (reveal_fraction_ > 0.0 && !hide_debounce_timer_.IsRunning() && CanHide()) {
-+      hide_debounce_timer_.Start(
-+          FROM_HERE, base::Milliseconds(kHideDebounceDelayMs),
-+          base::BindOnce(&VeloxAutoHideController::Hide,
-+                          weak_factory_.GetWeakPtr(), true));
++    gfx::Point screen_loc =
++        display::Screen::GetScreen()->GetCursorScreenPoint();
++    if (IsCursorOverTopBar(screen_loc) ||
++        (reveal_fraction_ > 0.0 && IsCursorOverHeaderPopup(screen_loc))) {
++      // Moving from the browser HWND into a header-anchored popup/bubble HWND
++      // fires kMouseExited on the browser window; keep the header revealed.
++      mouse_hovering_ = true;
++      hide_debounce_timer_.Stop();
++      return;
 +    }
++    mouse_hovering_ = false;
++    ScheduleHideIfNeeded();
 +    return;
 +  }
 +
@@ -611,6 +792,12 @@ index 0000000000..5c20c941b7
 +
 +  display::Screen* screen = display::Screen::GetScreen();
 +  gfx::Point screen_loc = screen->GetCursorScreenPoint();
++  if (reveal_fraction_ > 0.0 && IsCursorOverHeaderPopup(screen_loc)) {
++    mouse_hovering_ = true;
++    hide_debounce_timer_.Stop();
++    return;
++  }
++
 +  gfx::Point view_loc = screen_loc;
 +  views::View::ConvertPointFromScreen(browser_view_, &view_loc);
 +
@@ -622,21 +809,10 @@ index 0000000000..5c20c941b7
 +  int bar_height = browser_view_->top_container()
 +                       ? browser_view_->top_container()->height()
 +                       : 70;
-+
-+  display::Display display =
-+      screen->GetDisplayNearestWindow(browser_view_->GetNativeWindow());
-+  int monitor_top = display.bounds().y();
-+
-+  bool is_maximized = browser_view_->IsMaximized();
-+  bool at_top_edge = false;
-+  if (is_maximized) {
-+    at_top_edge = (screen_loc.y() <= monitor_top + 1 &&
-+                   screen_loc.y() >= monitor_top - 5);
-+  } else {
-+    at_top_edge = (view_loc.y() >= -10 && view_loc.y() <= 1);
-+  }
-+
 +  int visible_bar_height = static_cast<int>(bar_height * reveal_fraction_);
++
++  bool at_top_edge = false;
++  bool over_top_bar = IsCursorOverTopBar(screen_loc, &at_top_edge);
 +
 +  if (at_top_edge) {
 +    mouse_hovering_ = true;
@@ -653,18 +829,12 @@ index 0000000000..5c20c941b7
 +      return;
 +    }
 +
-+    if (view_loc.y() >= -25 &&
-+        view_loc.y() <= visible_bar_height + kTopBarOvershootBuffer) {
++    if (over_top_bar) {
 +      mouse_hovering_ = true;
 +      hide_debounce_timer_.Stop();
 +    } else {
 +      mouse_hovering_ = false;
-+      if (!hide_debounce_timer_.IsRunning() && CanHide()) {
-+        hide_debounce_timer_.Start(
-+            FROM_HERE, base::Milliseconds(kHideDebounceDelayMs),
-+            base::BindOnce(&VeloxAutoHideController::Hide,
-+                            weak_factory_.GetWeakPtr(), true));
-+      }
++      ScheduleHideIfNeeded();
 +    }
 +  }
 +}
@@ -877,14 +1047,83 @@ index 0000000000..5c20c941b7
 +    fullscreen_toast_widget_ = nullptr;
 +    return;
 +  }
-+  CleanUp();
++  if (browser_view_ && widget == browser_view_->GetWidget()) {
++    CleanUp();
++    return;
++  }
++  if (child_widget_observations_.IsObservingSource(widget) ||
++      child_widgets_.contains(widget)) {
++    UnobserveChildWidget(widget);
++    CheckMousePosition();
++  }
++}
++
++void VeloxAutoHideController::OnWidgetVisibilityChanged(views::Widget* widget,
++                                                        bool visible) {
++  if (!browser_view_ || widget == fullscreen_toast_widget_ ||
++      widget == browser_view_->GetWidget()) {
++    return;
++  }
++  if (visible) {
++    if (IsHeaderRelatedWidget(widget) && is_enabled_ && !IsVideoFullscreen()) {
++      hide_debounce_timer_.Stop();
++      Reveal(true);
++    }
++  } else {
++    CheckMousePosition();
++  }
++}
++
++void VeloxAutoHideController::OnWidgetActivationChanged(views::Widget* widget,
++                                                        bool active) {
++  if (!browser_view_ || widget == fullscreen_toast_widget_ ||
++      widget == browser_view_->GetWidget()) {
++    return;
++  }
++  if (active) {
++    if (IsHeaderRelatedWidget(widget) && is_enabled_ && !IsVideoFullscreen()) {
++      hide_debounce_timer_.Stop();
++      Reveal(true);
++    }
++  } else {
++    CheckMousePosition();
++  }
++}
++
++void VeloxAutoHideController::OnWidgetChildAdded(views::Widget* widget,
++                                                 views::Widget* child_widget) {
++  if (!browser_view_ || !child_widget) {
++    return;
++  }
++  if (widget == browser_view_->GetWidget() ||
++      child_widget_observations_.IsObservingSource(widget)) {
++    ObserveChildWidget(child_widget);
++    if (child_widget->IsVisible() && IsHeaderRelatedWidget(child_widget) &&
++        is_enabled_ && !IsVideoFullscreen()) {
++      hide_debounce_timer_.Stop();
++      Reveal(true);
++    }
++  }
++}
++
++void VeloxAutoHideController::OnWidgetChildRemoved(
++    views::Widget* widget,
++    views::Widget* child_widget) {
++  if (!browser_view_ || !child_widget) {
++    return;
++  }
++  if (widget == browser_view_->GetWidget() ||
++      child_widget_observations_.IsObservingSource(widget)) {
++    UnobserveChildWidget(child_widget);
++    CheckMousePosition();
++  }
 +}
 diff --git a/chrome/browser/ui/views/frame/velox_auto_hide_controller.h b/chrome/browser/ui/views/frame/velox_auto_hide_controller.h
 new file mode 100644
-index 0000000000..57d91b3152
+index 0000000000..fe1bab943b
 --- /dev/null
 +++ b/chrome/browser/ui/views/frame/velox_auto_hide_controller.h
-@@ -0,0 +1,151 @@
+@@ -0,0 +1,172 @@
 +// Copyright 2026 The Chromium Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -895,8 +1134,10 @@ index 0000000000..57d91b3152
 +#include <memory>
 +#include <string>
 +
++#include "base/containers/flat_set.h"
 +#include "base/memory/raw_ptr.h"
 +#include "base/memory/weak_ptr.h"
++#include "base/scoped_multi_source_observation.h"
 +#include "base/scoped_observation.h"
 +#include "base/timer/timer.h"
 +#include "chrome/browser/notifications/notification_display_service.h"
@@ -912,6 +1153,7 @@ index 0000000000..57d91b3152
 +}
 +
 +namespace gfx {
++class Point;
 +class SlideAnimation;
 +}
 +
@@ -995,11 +1237,25 @@ index 0000000000..57d91b3152
 +
 +  // views::WidgetObserver:
 +  void OnWidgetDestroying(views::Widget* widget) override;
++  void OnWidgetVisibilityChanged(views::Widget* widget, bool visible) override;
++  void OnWidgetActivationChanged(views::Widget* widget, bool active) override;
++  void OnWidgetChildAdded(views::Widget* widget,
++                          views::Widget* child_widget) override;
++  void OnWidgetChildRemoved(views::Widget* widget,
++                            views::Widget* child_widget) override;
 +
 + private:
 +  bool CanHide() const;
 +  bool IsVideoFullscreen() const;
 +  void CheckMousePosition();
++  void ScheduleHideIfNeeded();
++  void ObserveChildWidget(views::Widget* child_widget);
++  void UnobserveChildWidget(views::Widget* child_widget);
++  bool IsHeaderRelatedWidget(const views::Widget* widget, int depth = 0) const;
++  bool HasActiveHeaderPopupOrBubble() const;
++  bool IsCursorOverHeaderPopup(const gfx::Point& screen_loc) const;
++  bool IsCursorOverTopBar(const gfx::Point& screen_loc,
++                          bool* out_at_top_edge = nullptr) const;
 +  void ShowFullscreenVideoToast(const std::u16string& title,
 +                                const std::u16string& message);
 +  void DismissFullscreenVideoToast();
@@ -1024,6 +1280,10 @@ index 0000000000..57d91b3152
 +
 +  raw_ptr<views::Widget> fullscreen_toast_widget_ = nullptr;
 +  raw_ptr<views::FocusManager> focus_manager_ = nullptr;
++
++  base::flat_set<raw_ptr<views::Widget>> child_widgets_;
++  base::ScopedMultiSourceObservation<views::Widget, views::WidgetObserver>
++      child_widget_observations_{this};
 +
 +  base::ScopedObservation<views::Widget, views::WidgetObserver>
 +      widget_observation_{this};

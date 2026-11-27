@@ -1,0 +1,4220 @@
+diff --git a/chrome/VERSION b/chrome/VERSION
+index f6b3022200..2b271cee5b 100644
+--- a/chrome/VERSION
++++ b/chrome/VERSION
+@@ -1,4 +1,4 @@
+ MAJOR=134
+ MINOR=0
+ BUILD=6998
+-PATCH=178
++PATCH=188
+diff --git a/chrome/browser/sessions/session_restore_delegate.cc b/chrome/browser/sessions/session_restore_delegate.cc
+index 7afba7fc4c..92c5eacb89 100644
+--- a/chrome/browser/sessions/session_restore_delegate.cc
++++ b/chrome/browser/sessions/session_restore_delegate.cc
+@@ -14,8 +14,13 @@
+ #include <array>
+ #include <utility>
+ 
++#include "base/functional/bind.h"
++#include "base/memory/weak_ptr.h"
+ #include "base/metrics/field_trial.h"
++#include "base/task/single_thread_task_runner.h"
++#include "base/time/time.h"
+ #include "chrome/browser/performance_manager/public/background_tab_loading_policy.h"
++#include "chrome/browser/sessions/session_restore.h"
+ #include "chrome/browser/sessions/session_restore_stats_collector.h"
+ #include "chrome/browser/sessions/tab_loader.h"
+ #include "chrome/common/url_constants.h"
+@@ -92,40 +97,57 @@ void SessionRestoreDelegate::RestoreTabs(
+   if (tabs.empty())
+     return;
+ 
+-  // Restore the favicon for all tabs. Any tab may end up being deferred due
+-  // to memory pressure so it's best to have some visual indication of its
+-  // contents.
++  // Restore the active tab's favicon immediately and stagger deferred
++  // background-tab favicon fetches briefly so startup SQLite/UI work does not
++  // compete with loading and painting the active page.
++  std::vector<base::WeakPtr<content::WebContents>> deferred_favicon_tabs;
++  deferred_favicon_tabs.reserve(tabs.size());
+   for (const auto& restored_tab : tabs) {
+     CHECK(restored_tab.contents());
+-    // Restore the favicon for deferred tabs.
+-    favicon::ContentFaviconDriver* favicon_driver =
+-        favicon::ContentFaviconDriver::FromWebContents(restored_tab.contents());
+-    if (favicon_driver) {
+-      favicon_driver->FetchFavicon(favicon_driver->GetActiveURL(),
+-                                   /*is_same_document=*/false);
++    if (restored_tab.is_active()) {
++      favicon::ContentFaviconDriver* favicon_driver =
++          favicon::ContentFaviconDriver::FromWebContents(
++              restored_tab.contents());
++      if (favicon_driver) {
++        favicon_driver->FetchFavicon(favicon_driver->GetActiveURL(),
++                                     /*is_same_document=*/false);
++      }
++    } else {
++      deferred_favicon_tabs.push_back(restored_tab.contents()->GetWeakPtr());
+     }
+   }
+ 
++  if (!deferred_favicon_tabs.empty()) {
++    base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
++        FROM_HERE,
++        base::BindOnce(
++            [](std::vector<base::WeakPtr<content::WebContents>> weak_tabs) {
++              for (const auto& weak_contents : weak_tabs) {
++                content::WebContents* contents = weak_contents.get();
++                if (!contents) {
++                  continue;
++                }
++                favicon::ContentFaviconDriver* favicon_driver =
++                    favicon::ContentFaviconDriver::FromWebContents(contents);
++                if (favicon_driver) {
++                  favicon_driver->FetchFavicon(favicon_driver->GetActiveURL(),
++                                               /*is_same_document=*/false);
++                }
++              }
++            },
++            std::move(deferred_favicon_tabs)),
++        base::Milliseconds(400));
++  }
++
+   SessionRestoreStatsCollector::GetOrCreateInstance(
+       restore_started,
+       std::make_unique<
+           SessionRestoreStatsCollector::UmaStatsReportingDelegate>())
+       ->TrackTabs(tabs);
+ 
+-  // Don't start a TabLoader here if background tab loading is done by
+-  // PerformanceManager.
+-  if (!base::FeatureList::IsEnabled(
+-          performance_manager::features::
+-              kBackgroundTabLoadingFromPerformanceManager)) {
+-    TabLoader::RestoreTabs(tabs, restore_started);
+-  } else {
+-    std::vector<content::WebContents*> web_contents_vector;
+-    web_contents_vector.reserve(tabs.size());
+-    for (auto tab : tabs) {
+-      CHECK(tab.contents());
+-      web_contents_vector.push_back(tab.contents());
+-    }
+-    performance_manager::policies::ScheduleLoadForRestoredTabs(
+-        std::move(web_contents_vector));
+-  }
++  // In VELOX: Only the active/foreground tab is loaded on startup.
++  // All background tabs remain deferred/unloaded until explicitly clicked
++  // by the user, providing instantaneous startup, eliminating CPU/network
++  // bottlenecks, and preventing unnecessary memory consumption.
++  SessionRestore::OnTabLoaderFinishedLoadingTabs();
+ }
+diff --git a/chrome/browser/ui/views/toolbar/toolbar_view.cc b/chrome/browser/ui/views/toolbar/toolbar_view.cc
+index 27efd0c423..05459e8038 100644
+--- a/chrome/browser/ui/views/toolbar/toolbar_view.cc
++++ b/chrome/browser/ui/views/toolbar/toolbar_view.cc
+@@ -13,24 +13,32 @@
+ #include "base/feature_list.h"
+ #include "base/functional/bind.h"
+ #include "base/i18n/number_formatting.h"
++#include "base/memory/weak_ptr.h"
+ #include "base/metrics/histogram_macros.h"
+ #include "base/metrics/user_metrics.h"
+ #include "base/metrics/user_metrics_action.h"
+ #include "base/strings/utf_string_conversions.h"
++#include "base/task/sequenced_task_runner.h"
++#include "base/time/time.h"
+ #include "base/trace_event/trace_event.h"
+ #include "build/build_config.h"
+ #include "chrome/app/chrome_command_ids.h"
+ #include "chrome/browser/apps/link_capturing/link_capturing_features.h"
+ #include "chrome/browser/command_updater.h"
+ #include "chrome/browser/download/bubble/download_bubble_prefs.h"
++#include "chrome/browser/lifetime/application_lifetime.h"
++#include "chrome/browser/lifetime/browser_shutdown.h"
+ #include "chrome/browser/media/router/media_router_feature.h"
+ #include "chrome/browser/performance_manager/public/user_tuning/user_tuning_utils.h"
+ #include "chrome/browser/profiles/profile.h"
+ #include "chrome/browser/profiles/profiles_state.h"
++#include "chrome/browser/sessions/session_restore.h"
++#include "chrome/browser/sessions/session_restore_observer.h"
+ #include "chrome/browser/themes/theme_properties.h"
+ #include "chrome/browser/ui/browser.h"
+ #include "chrome/browser/ui/browser_command_controller.h"
+ #include "chrome/browser/ui/browser_commands.h"
++#include "chrome/browser/ui/browser_finder.h"
+ #include "chrome/browser/ui/browser_content_setting_bubble_model_delegate.h"
+ #include "chrome/browser/ui/browser_element_identifiers.h"
+ #include "chrome/browser/ui/browser_tabstrip.h"
+@@ -78,8 +86,13 @@
+ #include "chrome/browser/ui/views/toolbar/toolbar_button.h"
+ #include "chrome/browser/ui/views/toolbar/toolbar_controller.h"
+ #include "chrome/browser/ui/web_applications/app_browser_controller.h"
++#include "chrome/browser/upgrade_detector/get_installed_version.h"
++#include "chrome/browser/upgrade_detector/upgrade_detector.h"
++#include "chrome/browser/upgrade_detector/upgrade_observer.h"
++#include "components/version_info/version_info.h"
+ #include "chrome/common/chrome_features.h"
+ #include "chrome/common/pref_names.h"
++#include "chrome/common/url_constants.h"
+ #include "chrome/grit/branded_strings.h"
+ #include "chrome/grit/generated_resources.h"
+ #include "chrome/grit/theme_resources.h"
+@@ -112,10 +125,42 @@
+ #include "ui/views/accessibility/view_accessibility.h"
+ #include "ui/views/background.h"
+ #include "ui/views/cascading_property.h"
++#include "cc/paint/paint_shader.h"
++#include "third_party/skia/include/effects/SkGradientShader.h"
++#include "ui/views/bubble/bubble_dialog_delegate_view.h"
++#include "ui/views/controls/button/md_text_button.h"
++#include "ui/views/controls/image_view.h"
++#include "ui/views/controls/label.h"
++#include "ui/views/layout/box_layout.h"
+ #include "ui/views/layout/fill_layout.h"
+ #include "ui/views/layout/flex_layout.h"
+ #include "ui/views/layout/proposed_layout.h"
+ #include "ui/views/view_class_properties.h"
++#include "ui/gfx/animation/slide_animation.h"
++#include "ui/views/animation/animation_delegate_views.h"
++#include "base/timer/timer.h"
++#include "chrome/browser/ui/tabs/tab_enums.h"
++#include "components/vector_icons/vector_icons.h"
++#include "ui/display/screen.h"
++#include <map>
++#include <set>
++#include <vector>
++
++#include "base/files/file_util.h"
++#include "base/files/important_file_writer.h"
++#include "base/json/json_reader.h"
++#include "base/json/json_writer.h"
++#include "base/no_destructor.h"
++#include "base/strings/string_util.h"
++#include "base/task/single_thread_task_runner.h"
++#include "base/values.h"
++#include "chrome/browser/ui/views/tabs/tab.h"
++#include "chrome/browser/ui/views/tabs/tab_container.h"
++#include "ui/base/mojom/menu_source_type.mojom.h"
++#include "ui/menus/simple_menu_model.h"
++#include "ui/views/controls/menu/menu_runner.h"
++#include "ui/views/controls/textfield/textfield.h"
++#include "ui/views/controls/textfield/textfield_controller.h"
+ #include "ui/views/widget/tooltip_manager.h"
+ #include "ui/views/widget/widget.h"
+ #include "ui/views/window/non_client_view.h"
+@@ -199,8 +244,3046 @@ class TabstripLikeBackground : public views::Background {
+   const raw_ptr<BrowserView> browser_view_;
+ };
+ 
++// Futuristic in-browser update dialog for Velox
++class VeloxUpdateBubble : public views::BubbleDialogDelegateView {
++  METADATA_HEADER(VeloxUpdateBubble, views::BubbleDialogDelegateView)
++
++ public:
++  static void Show(views::View* anchor_view, Browser* browser) {
++    auto bubble = std::make_unique<VeloxUpdateBubble>(anchor_view, browser);
++    views::BubbleDialogDelegateView::CreateBubble(std::move(bubble))->Show();
++  }
++
++  VeloxUpdateBubble(views::View* anchor_view, Browser* browser)
++      : BubbleDialogDelegateView(anchor_view, views::BubbleBorder::TOP_RIGHT),
++        browser_(browser) {
++    SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
++    set_margins(gfx::Insets::VH(16, 20));
++    SetTitle(u"Velox Browser");
++    SetShowTitle(false);
++    SetShowCloseButton(true);
++  }
++
++  ~VeloxUpdateBubble() override = default;
++
++  void Init() override {
++    auto* layout = SetLayoutManager(std::make_unique<views::BoxLayout>(
++        views::BoxLayout::Orientation::kVertical, gfx::Insets(), 12));
++    layout->set_cross_axis_alignment(
++        views::BoxLayout::CrossAxisAlignment::kStretch);
++
++    bool has_upgrade = false;
++    UpgradeDetector* detector = UpgradeDetector::GetInstance();
++    if (detector && (detector->notify_upgrade() ||
++                     detector->is_upgrade_available() ||
++                     detector->upgrade_notification_stage() !=
++                         UpgradeDetector::UPGRADE_ANNOYANCE_NONE)) {
++      has_upgrade = true;
++    }
++
++    if (has_upgrade) {
++      // Header Title with emoji badge
++      auto* title_label = AddChildView(std::make_unique<views::Label>(
++          u"⚡ Velox Update Available", views::style::CONTEXT_DIALOG_TITLE,
++          views::style::STYLE_PRIMARY));
++      title_label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
++      title_label->SetFontList(title_label->font_list().Derive(
++          3, gfx::Font::NORMAL, gfx::Font::Weight::BOLD));
++
++      status_label_ = AddChildView(std::make_unique<views::Label>(
++          u"🚀 A new Velox update is ready to install!",
++          views::style::CONTEXT_LABEL, views::style::STYLE_PRIMARY));
++      status_label_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
++
++      auto* desc_label = AddChildView(std::make_unique<views::Label>(
++          u"Restart Velox now to apply the latest speed, security, and feature "
++          u"updates. All your open tabs and windows will be restored.",
++          views::style::CONTEXT_LABEL, views::style::STYLE_SECONDARY));
++      desc_label->SetMultiLine(true);
++      desc_label->SetMaximumWidth(320);
++      desc_label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
++
++      // Button Row
++      auto* button_row = AddChildView(std::make_unique<views::View>());
++      auto* row_layout =
++          button_row->SetLayoutManager(std::make_unique<views::BoxLayout>(
++              views::BoxLayout::Orientation::kHorizontal,
++              gfx::Insets::TLBR(8, 0, 0, 0), 8));
++      row_layout->set_main_axis_alignment(
++          views::BoxLayout::MainAxisAlignment::kEnd);
++
++      check_button_ =
++          button_row->AddChildView(std::make_unique<views::MdTextButton>(
++              base::BindRepeating(&VeloxUpdateBubble::OnRelaunchClicked,
++                                  base::Unretained(this)),
++              u"Relaunch to Update"));
++      check_button_->SetStyle(ui::ButtonStyle::kProminent);
++
++      auto* later_button =
++          button_row->AddChildView(std::make_unique<views::MdTextButton>(
++              base::BindRepeating(&VeloxUpdateBubble::OnLaterClicked,
++                                  base::Unretained(this)),
++              u"Later"));
++      later_button->SetStyle(ui::ButtonStyle::kDefault);
++    } else {
++      // Header Title with emoji badge
++      auto* title_label = AddChildView(std::make_unique<views::Label>(
++          u"⚡ Velox Browser", views::style::CONTEXT_DIALOG_TITLE,
++          views::style::STYLE_PRIMARY));
++      title_label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
++      title_label->SetFontList(title_label->font_list().Derive(
++          3, gfx::Font::NORMAL, gfx::Font::Weight::BOLD));
++
++      // Status / Version
++      status_label_ = AddChildView(std::make_unique<views::Label>(
++          u"Velox is up to date (Version 134.0 Ultra)",
++          views::style::CONTEXT_LABEL, views::style::STYLE_SECONDARY));
++      status_label_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
++
++      auto* desc_label = AddChildView(std::make_unique<views::Label>(
++          u"Official high-performance release with Velox Shield adblock, Opera "
++          u"One tab islands, and ultra-smooth hardware acceleration enabled.",
++          views::style::CONTEXT_LABEL, views::style::STYLE_DISABLED));
++      desc_label->SetMultiLine(true);
++      desc_label->SetMaximumWidth(320);
++      desc_label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
++
++      // Button Row
++      auto* button_row = AddChildView(std::make_unique<views::View>());
++      auto* row_layout =
++          button_row->SetLayoutManager(std::make_unique<views::BoxLayout>(
++              views::BoxLayout::Orientation::kHorizontal,
++              gfx::Insets::TLBR(8, 0, 0, 0), 8));
++      row_layout->set_main_axis_alignment(
++          views::BoxLayout::MainAxisAlignment::kEnd);
++
++      check_button_ =
++          button_row->AddChildView(std::make_unique<views::MdTextButton>(
++              base::BindRepeating(&VeloxUpdateBubble::OnCheckClicked,
++                                  base::Unretained(this)),
++              u"Check for Updates"));
++      check_button_->SetStyle(ui::ButtonStyle::kProminent);
++
++      auto* settings_button =
++          button_row->AddChildView(std::make_unique<views::MdTextButton>(
++              base::BindRepeating(&VeloxUpdateBubble::OnSettingsClicked,
++                                  base::Unretained(this)),
++              u"What's New"));
++      settings_button->SetStyle(ui::ButtonStyle::kDefault);
++    }
++  }
++
++ private:
++  static void PollAndRelaunchWhenStaged(int attempts_left) {
++    if (IsVeloxUpdateStaged() ||
++        (!IsVeloxUpdateInstalling() && attempts_left <= 0)) {
++      chrome::AttemptRelaunch();
++      return;
++    }
++    if (!IsVeloxUpdateInstalling()) {
++      TriggerVeloxUpdateInstallIfNeeded();
++    }
++    base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
++        FROM_HERE,
++        base::BindOnce(&VeloxUpdateBubble::PollAndRelaunchWhenStaged,
++                       attempts_left - 1),
++        base::Milliseconds(500));
++  }
++
++  void OnRelaunchClicked() {
++    if (IsVeloxUpdateStaged()) {
++      chrome::AttemptRelaunch();
++      return;
++    }
++    TriggerVeloxUpdateInstallIfNeeded();
++    if (check_button_) {
++      check_button_->SetEnabled(false);
++      check_button_->SetText(u"Applying Update...");
++    }
++    if (status_label_) {
++      status_label_->SetText(
++          u"⚡ Downloading & staging update... Velox will restart automatically!");
++    }
++    PollAndRelaunchWhenStaged(240);
++  }
++
++  void OnLaterClicked() {
++    if (GetWidget()) {
++      GetWidget()->CloseWithReason(
++          views::Widget::ClosedReason::kCancelButtonClicked);
++    }
++  }
++
++  void OnCheckClicked() {
++    if (!check_button_ || !status_label_) {
++      return;
++    }
++    check_button_->SetEnabled(false);
++    status_label_->SetText(u"Connecting to GitHub...");
++    GetInstalledVersion(base::BindOnce(
++        &VeloxUpdateBubble::OnInstalledVersionChecked, weak_factory_.GetWeakPtr()));
++  }
++
++  void OnInstalledVersionChecked(InstalledAndCriticalVersion versions) {
++    if (versions.installed_version.IsValid() &&
++        versions.installed_version.CompareTo(version_info::GetVersion()) > 0) {
++      if (status_label_) {
++        status_label_->SetText(u"🚀 A new Velox update is ready!");
++      }
++      if (check_button_) {
++        check_button_->SetEnabled(true);
++        check_button_->SetText(u"Relaunch to Update");
++        check_button_->SetCallback(base::BindRepeating(
++            &VeloxUpdateBubble::OnRelaunchClicked, base::Unretained(this)));
++      }
++    } else {
++      OnCheckCompleted();
++    }
++  }
++
++  void OnCheckCompleted() {
++    if (status_label_) {
++      status_label_->SetText(u"✨ Velox is up to date! (Latest Release)");
++    }
++    if (check_button_) {
++      check_button_->SetEnabled(true);
++      check_button_->SetText(u"Up to Date");
++    }
++  }
++
++  void OnSettingsClicked() {
++    if (browser_) {
++      chrome::AddTabAt(browser_, GURL("chrome://settings/help"), -1, true,
++                       std::nullopt);
++    }
++    if (GetWidget()) {
++      GetWidget()->CloseWithReason(
++          views::Widget::ClosedReason::kAcceptButtonClicked);
++    }
++  }
++
++  raw_ptr<Browser> browser_ = nullptr;
++  raw_ptr<views::Label> status_label_ = nullptr;
++  raw_ptr<views::MdTextButton> check_button_ = nullptr;
++  base::WeakPtrFactory<VeloxUpdateBubble> weak_factory_{this};
++};
++
++BEGIN_METADATA(VeloxUpdateBubble)
++END_METADATA
++
++}  // namespace
++
++class VeloxUpdateButton : public views::Button, public UpgradeObserver {
++  METADATA_HEADER(VeloxUpdateButton, views::Button)
++
++ public:
++  VeloxUpdateButton(ToolbarView* toolbar_view, Browser* browser)
++      : views::Button(base::BindRepeating(&VeloxUpdateButton::OnButtonPressed,
++                                          base::Unretained(this))),
++        toolbar_view_(toolbar_view),
++        browser_(browser) {
++    SetTooltipText(u"Update Velox - A new update is ready");
++    GetViewAccessibility().SetName(u"Update Velox");
++    SetFocusBehavior(FocusBehavior::ALWAYS);
++    SetVisible(false);
++
++    if (browser_ && browser_->profile() &&
++        browser_->profile()->IsOffTheRecord()) {
++      return;
++    }
++
++    if (UpgradeDetector::GetInstance()) {
++      UpgradeDetector::GetInstance()->AddObserver(this);
++      is_observing_ = true;
++    }
++    UpdateVisibility();
++  }
++
++  ~VeloxUpdateButton() override {
++    if (is_observing_ && UpgradeDetector::GetInstance()) {
++      UpgradeDetector::GetInstance()->RemoveObserver(this);
++      is_observing_ = false;
++    }
++  }
++
++  void UpdateVisibility() {
++    if (browser_ && browser_->profile() &&
++        browser_->profile()->IsOffTheRecord()) {
++      SetVisible(false);
++      return;
++    }
++    bool has_update = false;
++    UpgradeDetector* detector = UpgradeDetector::GetInstance();
++    if (detector) {
++      if (detector->notify_upgrade() || detector->is_upgrade_available() ||
++          detector->upgrade_notification_stage() !=
++              UpgradeDetector::UPGRADE_ANNOYANCE_NONE) {
++        has_update = true;
++      }
++    }
++    if (GetVisible() != has_update) {
++      SetVisible(has_update);
++      PreferredSizeChanged();
++      if (toolbar_view_) {
++        toolbar_view_->InvalidateLayout();
++      }
++    }
++  }
++
++  // UpgradeObserver:
++  void OnUpgradeRecommended() override { UpdateVisibility(); }
++  void OnCriticalUpgradeInstalled() override { UpdateVisibility(); }
++  void OnOutdatedInstall() override { UpdateVisibility(); }
++  void OnOutdatedInstallNoAutoUpdate() override { UpdateVisibility(); }
++
++  gfx::Size CalculatePreferredSize(
++      const views::SizeBounds& available_size) const override {
++    return gfx::Size(118, 28);
++  }
++
++  void PaintButtonContents(gfx::Canvas* canvas) override {
++    gfx::ScopedCanvas scoped_canvas(canvas);
++    const float scale = canvas->UndoDeviceScaleFactor();
++
++    gfx::RectF bounds_f(GetContentsBounds());
++    bounds_f.Scale(scale);
++    bounds_f.Inset(gfx::InsetsF::VH(1.0f * scale, 1.0f * scale));
++
++    const float radius = bounds_f.height() / 2.0f;
++    SkRRect rrect;
++    rrect.setRectXY(gfx::RectFToSkRect(bounds_f), radius, radius);
++
++    float hover_val = (GetState() == STATE_PRESSED)
++                          ? 1.0f
++                          : (GetState() == STATE_HOVERED ? 0.85f : 0.0f);
++
++    // Glowing Neon Glass Background Pill
++    cc::PaintFlags bg_flags;
++    bg_flags.setAntiAlias(true);
++    bg_flags.setStyle(cc::PaintFlags::kFill_Style);
++    bg_flags.setColor(SkColorSetARGB(
++        static_cast<uint8_t>(200 + hover_val * 35), 18, 22, 31));
++    canvas->sk_canvas()->drawRRect(rrect, bg_flags);
++
++    // Architectural Titanium Sapphire Rim
++    cc::PaintFlags border_flags;
++    border_flags.setAntiAlias(true);
++    border_flags.setStyle(cc::PaintFlags::kStroke_Style);
++    border_flags.setStrokeWidth(1.0f * scale);
++    border_flags.setColor(SkColorSetARGB(
++        static_cast<uint8_t>(75 + hover_val * 110), 59, 130, 246));
++    canvas->sk_canvas()->drawRRect(rrect, border_flags);
++
++    // Soft outer glow when hovered
++    if (hover_val > 0.0f) {
++      cc::PaintFlags glow_flags;
++      glow_flags.setAntiAlias(true);
++      glow_flags.setStyle(cc::PaintFlags::kStroke_Style);
++      glow_flags.setStrokeWidth(2.0f * scale);
++      glow_flags.setColor(
++          SkColorSetARGB(static_cast<uint8_t>(hover_val * 25), 59, 130, 246));
++      canvas->sk_canvas()->drawRRect(rrect, glow_flags);
++    }
++
++    // Vector Icon: Precision Update Arrow
++    const float icon_cx = bounds_f.x() + 15.0f * scale;
++    const float icon_cy = bounds_f.CenterPoint().y();
++    const float arrow_r = 4.0f * scale;
++
++    cc::PaintFlags icon_flags;
++    icon_flags.setAntiAlias(true);
++    icon_flags.setStyle(cc::PaintFlags::kStroke_Style);
++    icon_flags.setStrokeWidth(1.6f * scale);
++    icon_flags.setStrokeCap(cc::PaintFlags::kRound_Cap);
++    icon_flags.setStrokeJoin(cc::PaintFlags::kRound_Join);
++    icon_flags.setColor(hover_val > 0.0f ? SK_ColorWHITE
++                                        : SkColorSetRGB(96, 165, 250));
++
++    SkPath arrow_path;
++    arrow_path.moveTo(icon_cx - arrow_r * 0.75f, icon_cy - arrow_r * 0.2f);
++    arrow_path.lineTo(icon_cx, icon_cy - arrow_r);
++    arrow_path.lineTo(icon_cx + arrow_r * 0.75f, icon_cy - arrow_r * 0.2f);
++    arrow_path.moveTo(icon_cx, icon_cy - arrow_r);
++    arrow_path.lineTo(icon_cx, icon_cy + arrow_r);
++    canvas->sk_canvas()->drawPath(arrow_path, icon_flags);
++
++    // Live Ready Status Dot (precision emerald dot on right)
++    cc::PaintFlags dot_flags;
++    dot_flags.setAntiAlias(true);
++    dot_flags.setStyle(cc::PaintFlags::kFill_Style);
++    dot_flags.setColor(SkColorSetRGB(34, 197, 94));  // Precision emerald
++    canvas->DrawCircle(
++        gfx::PointF(bounds_f.right() - 10.0f * scale, bounds_f.CenterPoint().y()),
++        2.0f * scale, dot_flags);
++
++    canvas->sk_canvas()->restore();  // Back to DIPs for font drawing
++
++    gfx::Rect text_rect = GetContentsBounds();
++    text_rect.set_x(text_rect.x() + 26);
++    text_rect.set_width(text_rect.width() - 36);
++
++    SkColor text_color = (hover_val > 0.0f) ? SK_ColorWHITE
++                                            : SkColorSetRGB(226, 232, 240);
++    canvas->DrawStringRectWithFlags(
++        u"Update Velox",
++        gfx::FontList().Derive(1, gfx::Font::NORMAL,
++                               gfx::Font::Weight::SEMIBOLD),
++        text_color, text_rect,
++        gfx::Canvas::TEXT_ALIGN_LEFT | gfx::Canvas::NO_SUBPIXEL_RENDERING);
++  }
++
++ private:
++  void OnButtonPressed() {
++    VeloxUpdateBubble::Show(this, browser_);
++  }
++
++  raw_ptr<ToolbarView> toolbar_view_ = nullptr;
++  raw_ptr<Browser> browser_ = nullptr;
++  bool is_observing_ = false;
++};
++
++BEGIN_METADATA(VeloxUpdateButton)
++END_METADATA
++
++// ============================================================================
++// Velox Spaces (Workspaces) Infrastructure
++// ============================================================================
++
++class VeloxSpacesControl;
++
++struct TabSpacePersistedEntry {
++  int index = -1;
++  std::string url;
++  int ws = 0;
++};
++
++struct VeloxRuntimeState {
++  std::map<const Tab*, int> tab_workspaces;
++  std::map<const Tab*, TabStrip*> tab_to_tabstrip;
++  std::map<const TabStrip*, int> tabstrip_active_workspace;
++  std::map<const TabStrip*, TabContainer*> tabstrip_containers;
++  std::map<const TabStrip*, int> last_removed_workspace;
++  std::map<std::pair<const TabStrip*, int>, const Tab*> last_active_tab;
++  std::map<std::pair<const TabStrip*, int>, std::vector<const Tab*>> workspace_active_stack;
++  std::map<std::pair<const TabStrip*, int>, std::vector<const Tab*>> recent_visited_tabs;
++  bool switching_workspace = false;
++
++  // Persistence of tab -> space assignments across browser restarts.
++  // Pending entries loaded from disk, consumed as restored tabs are added.
++  std::vector<TabSpacePersistedEntry> pending_restore;
++  std::map<std::string, int> persisted_url_workspaces;
++  std::set<const Tab*> restore_eligible_tabs;
++  std::vector<base::WeakPtr<content::WebContents>> pending_restored_web_contents;
++  bool session_restore_observer_registered = false;
++  std::set<const Tab*> restored_tabs;
++  std::map<const Tab*, std::string> restored_tab_urls;
++  bool tab_spaces_loaded = false;
++  bool loaded_has_space_zero = false;
++  int loaded_total_tabs = 0;
++  int loaded_nonzero_tabs = 0;
++  bool awaiting_nonzero_restore = false;
++  bool user_modified_spaces = false;
++  int persisted_active_workspace = -1;
++  bool save_scheduled = false;
++  bool post_restore_sync_scheduled = false;
++  bool deferred_restore_layout_pending = false;
++  base::TimeTicks restore_deadline;
++  base::TimeTicks restore_write_grace_until;
++  base::FilePath tab_spaces_file;
++
++  std::set<VeloxSpacesControl*> spaces_controls;
++  std::vector<std::u16string> space_names = {u"General", u"Work", u"Focus"};
++  bool space_names_loaded = false;
++  raw_ptr<views::Widget> active_rename_bubble_widget = nullptr;
++  raw_ptr<views::Widget> active_preview_bubble_widget = nullptr;
++  int active_preview_space = -1;
++};
++
++VeloxRuntimeState& GetVeloxState() {
++  static base::NoDestructor<VeloxRuntimeState> state;
++  return *state;
++}
++
++namespace velox {
++void FlushDeferredSessionRestoreSpacesLayout();
++}  // namespace velox
++
++class VeloxSessionRestoreObserver final : public SessionRestoreObserver {
++ public:
++  void OnWillRestoreTab(content::WebContents* web_contents) override {
++    if (!web_contents) {
++      return;
++    }
++    auto& st = GetVeloxState();
++    for (auto it = st.pending_restored_web_contents.begin();
++         it != st.pending_restored_web_contents.end();) {
++      if (!*it) {
++        it = st.pending_restored_web_contents.erase(it);
++      } else {
++        ++it;
++      }
++    }
++    st.pending_restored_web_contents.push_back(web_contents->GetWeakPtr());
++  }
++
++  void OnSessionRestoreFinishedLoadingTabs() override {
++    velox::FlushDeferredSessionRestoreSpacesLayout();
++  }
++};
++
++void EnsureSessionRestoreObserverRegistered() {
++  auto& st = GetVeloxState();
++  if (st.session_restore_observer_registered) {
++    return;
++  }
++  static VeloxSessionRestoreObserver observer;
++  SessionRestore::AddObserver(&observer);
++  st.session_restore_observer_registered = true;
++}
++
++void NotifyVeloxSpacesControls();
++
++namespace velox {
++
++int GetSpaceCount() {
++  auto& st = GetVeloxState();
++  if (st.space_names.empty()) {
++    st.space_names = {u"General", u"Work", u"Focus"};
++  }
++  return static_cast<int>(st.space_names.size());
++}
++
++const std::u16string& GetSpaceName(int index) {
++  auto& st = GetVeloxState();
++  if (index >= 0 && index < static_cast<int>(st.space_names.size())) {
++    return st.space_names[index];
++  }
++  static const base::NoDestructor<std::u16string> kEmpty(u"");
++  return *kEmpty;
++}
++
++void LoadSpaceNames(Profile* profile) {
++  auto& st = GetVeloxState();
++  if (st.space_names_loaded || !profile) {
++    return;
++  }
++  base::FilePath json_file =
++      profile->GetPath().Append(FILE_PATH_LITERAL("velox_spaces.json"));
++  std::string content;
++  if (base::ReadFileToString(json_file, &content)) {
++    auto parsed = base::JSONReader::Read(content);
++    if (parsed && parsed->is_list()) {
++      const auto& list = parsed->GetList();
++      if (!list.empty()) {
++        st.space_names.clear();
++        for (size_t i = 0; i < std::min(size_t(9), list.size()); ++i) {
++          if (list[i].is_string()) {
++            std::string str = list[i].GetString();
++            st.space_names.push_back(
++                str.empty() ? (u"Space " + base::NumberToString16(i + 1))
++                            : base::UTF8ToUTF16(str));
++          }
++        }
++      }
++    }
++  }
++  if (st.space_names.empty()) {
++    st.space_names = {u"General", u"Work", u"Focus"};
++  }
++  st.space_names_loaded = true;
++}
++
++void SaveSpaceNames(Profile* profile) {
++  if (!profile) {
++    return;
++  }
++  auto& st = GetVeloxState();
++  base::Value::List list;
++  for (size_t i = 0; i < st.space_names.size(); ++i) {
++    list.Append(base::UTF16ToUTF8(st.space_names[i]));
++  }
++  std::string json_str;
++  if (base::JSONWriter::Write(list, &json_str)) {
++    base::FilePath json_file =
++        profile->GetPath().Append(FILE_PATH_LITERAL("velox_spaces.json"));
++    base::ImportantFileWriter::WriteFileAtomically(json_file, json_str);
++  }
++}
++
++void SetSpaceName(int index, const std::u16string& new_name, Profile* profile) {
++  auto& st = GetVeloxState();
++  if (index < 0 || index >= static_cast<int>(st.space_names.size())) {
++    return;
++  }
++  st.space_names[index] = new_name;
++  SaveSpaceNames(profile);
++  NotifyVeloxSpacesControls();
++}
++
++int CreateNewSpace(Profile* profile, const std::u16string& optional_name = u"") {
++  auto& st = GetVeloxState();
++  if (st.space_names.size() >= 9) {
++    return -1;
++  }
++  int new_idx = static_cast<int>(st.space_names.size());
++  std::u16string final_name = optional_name.empty()
++      ? (u"Space " + base::NumberToString16(new_idx + 1))
++      : optional_name;
++  st.space_names.push_back(final_name);
++  st.user_modified_spaces = true;
++  SaveSpaceNames(profile);
++  NotifyVeloxSpacesControls();
++  return new_idx;
++}
++
++bool DeleteSpace(int space_idx, Browser* browser);
++
++void RegisterTabContainer(TabStrip* tab_strip, TabContainer* container) {
++  EnsureSessionRestoreObserverRegistered();
++  auto& st = GetVeloxState();
++  st.tabstrip_containers[tab_strip] = container;
++  if (st.tabstrip_active_workspace.find(tab_strip) ==
++      st.tabstrip_active_workspace.end()) {
++    st.tabstrip_active_workspace[tab_strip] = 0;
++  }
++}
++
++void RecordActiveTabInWorkspace(const TabStrip* tab_strip,
++                                int ws,
++                                const Tab* tab) {
++  if (!tab_strip || !tab) {
++    return;
++  }
++  auto& st = GetVeloxState();
++  auto& stack = st.workspace_active_stack[{tab_strip, ws}];
++  auto it = std::find(stack.begin(), stack.end(), tab);
++  if (it != stack.end()) {
++    stack.erase(it);
++  }
++  stack.insert(stack.begin(), tab);
++}
++
++void RemoveTabFromWorkspaceStack(const TabStrip* tab_strip,
++                                 int ws,
++                                 const Tab* tab) {
++  if (!tab_strip || !tab) {
++    return;
++  }
++  auto& st = GetVeloxState();
++  auto& stack = st.workspace_active_stack[{tab_strip, ws}];
++  auto it = std::find(stack.begin(), stack.end(), tab);
++  if (it != stack.end()) {
++    stack.erase(it);
++  }
++  auto& recent = st.recent_visited_tabs[{tab_strip, ws}];
++  auto rit = std::find(recent.begin(), recent.end(), tab);
++  if (rit != recent.end()) {
++    recent.erase(rit);
++  }
++}
++
++void OnTabStripDestroyed(TabStrip* tab_strip) {
++  auto& st = GetVeloxState();
++  st.tabstrip_containers.erase(tab_strip);
++  st.tabstrip_active_workspace.erase(tab_strip);
++  st.last_removed_workspace.erase(tab_strip);
++  for (int w = 0; w < 9; ++w) {
++    auto key = std::make_pair(static_cast<const TabStrip*>(tab_strip), w);
++    st.workspace_active_stack.erase(key);
++    st.recent_visited_tabs.erase(key);
++    st.last_active_tab.erase(key);
++  }
++  for (auto it = st.tab_to_tabstrip.begin(); it != st.tab_to_tabstrip.end();) {
++    if (it->second == tab_strip) {
++      st.tab_workspaces.erase(it->first);
++      st.restore_eligible_tabs.erase(it->first);
++      st.restored_tabs.erase(it->first);
++      st.restored_tab_urls.erase(it->first);
++      it = st.tab_to_tabstrip.erase(it);
++    } else {
++      ++it;
++    }
++  }
++}
++
++int GetTabWorkspace(const Tab* tab) {
++  auto& st = GetVeloxState();
++  auto it = st.tab_workspaces.find(tab);
++  return it != st.tab_workspaces.end() ? it->second : 0;
++}
++
++int GetTabStripActiveWorkspace(const TabStrip* tab_strip) {
++  if (!tab_strip) {
++    return 0;
++  }
++  auto& st = GetVeloxState();
++  auto it = st.tabstrip_active_workspace.find(tab_strip);
++  return it != st.tabstrip_active_workspace.end() ? it->second : 0;
++}
++
++bool IsTabInActiveWorkspace(const Tab* tab) {
++  if (!tab || tab->dragging()) {
++    return true;
++  }
++  auto& st = GetVeloxState();
++  auto ts_it = st.tab_to_tabstrip.find(tab);
++  if (ts_it == st.tab_to_tabstrip.end() || !ts_it->second) {
++    return true;
++  }
++  return GetTabWorkspace(tab) == GetTabStripActiveWorkspace(ts_it->second);
++}
++
++int GetTabRecentVisitRank(const Tab* tab) {
++  if (!tab || tab->closing() || tab->IsActive()) {
++    return 0;
++  }
++  auto& st = GetVeloxState();
++  auto ts_it = st.tab_to_tabstrip.find(tab);
++  if (ts_it == st.tab_to_tabstrip.end() || !ts_it->second) {
++    return 0;
++  }
++  const TabStrip* tab_strip = ts_it->second;
++  const int ws = GetTabWorkspace(tab);
++  auto rec_it = st.recent_visited_tabs.find({tab_strip, ws});
++  if (rec_it == st.recent_visited_tabs.end()) {
++    return 0;
++  }
++  int inactive_rank = 0;
++  for (const Tab* cand : rec_it->second) {
++    if (!cand || cand->closing() || cand->IsActive()) {
++      continue;
++    }
++    ++inactive_rank;
++    if (cand == tab) {
++      return inactive_rank <= 3 ? inactive_rank : 0;
++    }
++    if (inactive_rank >= 3) {
++      break;
++    }
++  }
++  return 0;
++}
++
++// ---- Tab space persistence ------------------------------------------------
++
++namespace {
++
++Profile* ProfileForTabStrip(const TabStrip* tab_strip) {
++  if (!tab_strip) {
++    return nullptr;
++  }
++  auto* bwi = const_cast<TabStrip*>(tab_strip)->GetBrowserWindowInterface();
++  if (!bwi) {
++    return nullptr;
++  }
++  return bwi->GetProfile();
++}
++
++bool IsTabStripClosingAll(const TabStrip* tab_strip) {
++  if (!tab_strip) {
++    return false;
++  }
++  auto* bwi = const_cast<TabStrip*>(tab_strip)->GetBrowserWindowInterface();
++  if (!bwi) {
++    return false;
++  }
++  if (bwi->IsAttemptingToCloseBrowser()) {
++    return true;
++  }
++  if (Browser* browser = bwi->GetBrowserForMigrationOnly()) {
++    if (browser->IsBrowserClosing() || browser->is_delete_scheduled()) {
++      return true;
++    }
++  }
++  TabStripModel* model = bwi->GetTabStripModel();
++  return model && model->closing_all();
++}
++
++bool IsSessionRestoringForTabStrip(const TabStrip* tab_strip) {
++  Profile* profile = ProfileForTabStrip(tab_strip);
++  return profile && SessionRestore::IsRestoring(profile);
++}
++
++bool IsGenericNewTabOrBlankUrl(const std::string& url_spec) {
++  return url_spec.empty() || url_spec == "about:blank" ||
++         url_spec == chrome::kChromeUINewTabURL ||
++         url_spec == chrome::kChromeUINewTabPageURL ||
++         url_spec == "chrome://newtab" || url_spec == "chrome://new-tab-page";
++}
++
++content::WebContents* WebContentsForTabIndex(const TabStrip* tab_strip,
++                                             int model_index) {
++  if (!tab_strip || model_index < 0) {
++    return nullptr;
++  }
++  auto* bwi = const_cast<TabStrip*>(tab_strip)->GetBrowserWindowInterface();
++  TabStripModel* model = bwi ? bwi->GetTabStripModel() : nullptr;
++  if (!model || !model->ContainsIndex(model_index)) {
++    return nullptr;
++  }
++  return model->GetWebContentsAt(model_index);
++}
++
++bool ConsumeSessionRestoredWebContents(content::WebContents* wc) {
++  auto& st = GetVeloxState();
++  bool matched = false;
++  for (auto it = st.pending_restored_web_contents.begin();
++       it != st.pending_restored_web_contents.end();) {
++    content::WebContents* cand = it->get();
++    if (!cand) {
++      it = st.pending_restored_web_contents.erase(it);
++    } else if (wc && cand == wc) {
++      it = st.pending_restored_web_contents.erase(it);
++      matched = true;
++    } else {
++      ++it;
++    }
++  }
++  return matched;
++}
++
++std::string ResolveUrlForTab(const TabStrip* tab_strip,
++                             const Tab* tab,
++                             int model_index,
++                             const GURL& fallback_url = GURL()) {
++  if (fallback_url.is_valid() && !fallback_url.is_empty()) {
++    return fallback_url.spec();
++  }
++  if (tab_strip && model_index >= 0) {
++    auto* bwi = const_cast<TabStrip*>(tab_strip)->GetBrowserWindowInterface();
++    TabStripModel* model = bwi ? bwi->GetTabStripModel() : nullptr;
++    if (model && model->ContainsIndex(model_index)) {
++      if (auto* wc = model->GetWebContentsAt(model_index)) {
++        const GURL& u = wc->GetVisibleURL();
++        if (u.is_valid() && !u.is_empty()) {
++          return u.spec();
++        }
++        const GURL& committed = wc->GetLastCommittedURL();
++        if (committed.is_valid() && !committed.is_empty()) {
++          return committed.spec();
++        }
++      }
++    }
++  }
++  if (tab && tab->data().visible_url.is_valid() &&
++      !tab->data().visible_url.is_empty()) {
++    return tab->data().visible_url.spec();
++  }
++  return std::string();
++}
++
++void EnsureTabSpacesLoaded(TabStrip* tab_strip) {
++  EnsureSessionRestoreObserverRegistered();
++  auto& st = GetVeloxState();
++  if (st.tab_spaces_loaded) {
++    return;
++  }
++  Profile* profile = ProfileForTabStrip(tab_strip);
++  if (!profile || profile->IsOffTheRecord()) {
++    return;
++  }
++  velox::LoadSpaceNames(profile);
++  st.tab_spaces_loaded = true;
++  st.tab_spaces_file =
++      profile->GetPath().Append(FILE_PATH_LITERAL("velox_tab_spaces.json"));
++  st.restore_deadline = base::TimeTicks::Now() + base::Hours(12);
++
++  std::string content;
++  if (!base::ReadFileToString(st.tab_spaces_file, &content)) {
++    return;
++  }
++  auto parsed = base::JSONReader::Read(content);
++  if (!parsed) {
++    return;
++  }
++  const base::Value::List* list_ptr = nullptr;
++  if (parsed->is_list()) {
++    list_ptr = &parsed->GetList();
++  } else if (parsed->is_dict()) {
++    const base::Value::Dict& root = parsed->GetDict();
++    if (std::optional<int> active_ws = root.FindInt("active_ws");
++        active_ws && *active_ws >= 0 && *active_ws < 9) {
++      st.persisted_active_workspace = *active_ws;
++    }
++    if (const base::Value::Dict* url_map = root.FindDict("url_workspaces")) {
++      for (const auto [url_key, ws_val] : *url_map) {
++        if (!IsGenericNewTabOrBlankUrl(url_key) && ws_val.is_int()) {
++          int ws_idx = ws_val.GetInt();
++          if (ws_idx > 0 && ws_idx < 9) {
++            st.persisted_url_workspaces[url_key] = ws_idx;
++          }
++        }
++      }
++    }
++    list_ptr = root.FindList("tabs");
++  }
++  if (!list_ptr) {
++    st.awaiting_nonzero_restore = !st.persisted_url_workspaces.empty();
++    if (st.awaiting_nonzero_restore) {
++      st.restore_write_grace_until = base::TimeTicks::Now() + base::Seconds(10);
++    }
++    return;
++  }
++  for (const auto& item : *list_ptr) {
++    if (!item.is_dict()) {
++      continue;
++    }
++    const base::Value::Dict& d = item.GetDict();
++    if (std::optional<int> active_ws = d.FindInt("active_ws");
++        active_ws && *active_ws >= 0 && *active_ws < 9 &&
++        st.persisted_active_workspace == -1) {
++      st.persisted_active_workspace = *active_ws;
++    }
++    std::optional<int> ws = d.FindInt("ws");
++    if (!ws || *ws < 0 || *ws >= 9) {
++      continue;
++    }
++    ++st.loaded_total_tabs;
++    if (*ws == 0) {
++      st.loaded_has_space_zero = true;
++    } else {
++      ++st.loaded_nonzero_tabs;
++    }
++    const std::string* url = d.FindString("url");
++    std::optional<int> idx = d.FindInt("index");
++    TabSpacePersistedEntry entry;
++    entry.index = idx.value_or(-1);
++    entry.url = url ? *url : std::string();
++    entry.ws = *ws;
++    if (entry.ws > 0 && !IsGenericNewTabOrBlankUrl(entry.url)) {
++      st.persisted_url_workspaces[entry.url] = entry.ws;
++    }
++    st.pending_restore.push_back(std::move(entry));
++  }
++  st.awaiting_nonzero_restore =
++      (st.loaded_nonzero_tabs > 0 || !st.persisted_url_workspaces.empty());
++  if (st.awaiting_nonzero_restore) {
++    st.restore_write_grace_until = base::TimeTicks::Now() + base::Seconds(10);
++  }
++}
++
++void WriteTabSpacesFile(const std::vector<TabSpacePersistedEntry>& entries,
++                        int active_ws) {
++  auto& st = GetVeloxState();
++  if (st.tab_spaces_file.empty()) {
++    return;
++  }
++  base::Value::Dict root;
++  root.Set("active_ws", active_ws);
++
++  base::Value::Dict url_workspaces;
++  for (const auto& entry : entries) {
++    if (entry.ws > 0 && entry.ws < 9 && !IsGenericNewTabOrBlankUrl(entry.url)) {
++      url_workspaces.Set(entry.url, entry.ws);
++    }
++  }
++  root.Set("url_workspaces", std::move(url_workspaces));
++
++  base::Value::List list;
++  for (const auto& entry : entries) {
++    base::Value::Dict d;
++    d.Set("index", entry.index);
++    d.Set("url", entry.url);
++    d.Set("ws", entry.ws);
++    d.Set("active_ws", active_ws);
++    list.Append(std::move(d));
++  }
++  root.Set("tabs", std::move(list));
++
++  std::string json_str;
++  if (base::JSONWriter::Write(root, &json_str)) {
++    base::ImportantFileWriter::WriteFileAtomically(st.tab_spaces_file,
++                                                   json_str);
++  }
++}
++
++Tab* SafeGetTab(const TabStrip* tab_strip, int index) {
++  if (!tab_strip || index < 0 || index >= tab_strip->GetTabCount()) {
++    return nullptr;
++  }
++  return const_cast<TabStrip*>(tab_strip)->tab_at(index);
++}
++
++void AppendTabStripEntries(const TabStrip* tab_strip,
++                           std::vector<TabSpacePersistedEntry>* out) {
++  if (!tab_strip) {
++    return;
++  }
++  const int count = tab_strip->GetTabCount();
++  for (int i = 0; i < count; ++i) {
++    const Tab* tab = SafeGetTab(tab_strip, i);
++    if (!tab || tab->closing()) {
++      continue;
++    }
++    const int max_ws = std::max(0, velox::GetSpaceCount() - 1);
++    const int ws = std::clamp(GetTabWorkspace(tab), 0, max_ws);
++    std::string url_spec = ResolveUrlForTab(tab_strip, tab, i);
++    out->push_back({i, std::move(url_spec), ws});
++  }
++}
++
+ }  // namespace
+ 
++void SaveTabSpaces() {
++  auto& st = GetVeloxState();
++  st.save_scheduled = false;
++  if (st.tab_spaces_file.empty()) {
++    return;
++  }
++  if (browser_shutdown::IsTryingToQuit()) {
++    return;
++  }
++  for (const auto& [tab, ts] : st.tab_to_tabstrip) {
++    if (ts && (IsTabStripClosingAll(ts) || IsSessionRestoringForTabStrip(ts))) {
++      return;
++    }
++  }
++  for (const auto& [ts, container] : st.tabstrip_containers) {
++    if (ts && (IsTabStripClosingAll(ts) || IsSessionRestoringForTabStrip(ts))) {
++      return;
++    }
++  }
++
++  std::set<const TabStrip*> strips;
++  for (const auto& [tab, ts] : st.tab_to_tabstrip) {
++    if (ts) {
++      strips.insert(ts);
++    }
++  }
++  if (strips.empty()) {
++    return;
++  }
++
++  std::vector<TabSpacePersistedEntry> entries;
++  int active_ws = 0;
++  for (const TabStrip* ts : strips) {
++    const int max_ws = std::max(0, velox::GetSpaceCount() - 1);
++    active_ws = std::clamp(GetTabStripActiveWorkspace(ts), 0, max_ws);
++    AppendTabStripEntries(ts, &entries);
++  }
++  if (entries.empty()) {
++    return;
++  }
++
++  int current_nonzero_tabs = 0;
++  for (const auto& entry : entries) {
++    if (entry.ws > 0) {
++      ++current_nonzero_tabs;
++    }
++  }
++  bool still_has_pending_nonzero = false;
++  for (const auto& pending : st.pending_restore) {
++    if (pending.ws > 0) {
++      still_has_pending_nonzero = true;
++      break;
++    }
++  }
++
++  // Never clobber saved multi-space assignments on a post-crash startup tab
++  // (e.g. a single chrome://newtab/ waiting for the user to click Restore) or
++  // while remaining non-zero-space tabs are still restoring.
++  if (!st.user_modified_spaces && st.awaiting_nonzero_restore) {
++    if (current_nonzero_tabs == 0) {
++      return;
++    }
++    if (still_has_pending_nonzero &&
++        base::TimeTicks::Now() < st.restore_write_grace_until) {
++      return;
++    }
++  }
++
++  st.awaiting_nonzero_restore = false;
++  WriteTabSpacesFile(entries, active_ws);
++}
++
++void ScheduleSaveTabSpaces() {
++  auto& st = GetVeloxState();
++  if (st.save_scheduled || browser_shutdown::IsTryingToQuit()) {
++    return;
++  }
++  st.save_scheduled = true;
++  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
++      FROM_HERE, base::BindOnce(&SaveTabSpaces));
++}
++
++void RefreshTabStripLayoutForSpaces(TabStrip* tab_strip);
++
++void RegisterTabInWorkspace(TabStrip* tab_strip,
++                            const Tab* tab,
++                            int model_index = -1) {
++  if (!tab_strip || !tab) {
++    return;
++  }
++  EnsureTabSpacesLoaded(tab_strip);
++  auto& st = GetVeloxState();
++  const bool is_restoring = IsSessionRestoringForTabStrip(tab_strip);
++  content::WebContents* wc = WebContentsForTabIndex(tab_strip, model_index);
++  const bool from_session_restore_tab = ConsumeSessionRestoredWebContents(wc);
++  // Only tabs actually created by SessionRestore are eligible for saved
++  // workspace re-assignment in MaybeRestoreTabWorkspace. User-opened tabs
++  // (Ctrl+T, +, links, bookmarks) must always open in the active space.
++  if (from_session_restore_tab) {
++    st.restore_eligible_tabs.insert(tab);
++  }
++  int initial_ws = from_session_restore_tab
++                       ? 0
++                       : GetTabStripActiveWorkspace(tab_strip);
++  st.tab_to_tabstrip[tab] = tab_strip;
++  st.tab_workspaces[tab] = initial_ws;
++  RecordActiveTabInWorkspace(tab_strip, initial_ws, tab);
++  if (!from_session_restore_tab && !is_restoring &&
++      !IsTabStripClosingAll(tab_strip)) {
++    ScheduleSaveTabSpaces();
++  }
++}
++
++void MaybeRestoreTabWorkspace(TabStrip* tab_strip,
++                              Tab* tab,
++                              int model_index,
++                              const GURL& url) {
++  if (!tab_strip || !tab) {
++    return;
++  }
++  EnsureTabSpacesLoaded(tab_strip);
++  auto& st = GetVeloxState();
++
++  if (!st.restore_eligible_tabs.contains(tab)) {
++    return;
++  }
++
++  const std::string url_spec = ResolveUrlForTab(tab_strip, tab, model_index, url);
++  // Wait for SetTabData / OnTabDataChanged once an empty or about:blank tab
++  // receives its real URL so it cannot consume another tab's restore entry.
++  if (url_spec.empty() || url_spec == "about:blank") {
++    return;
++  }
++
++  // Consume restore eligibility once the initial URL settles so normal browsing
++  // navigations on this tab later cannot trigger workspace reassignment.
++  st.restore_eligible_tabs.erase(tab);
++
++  if (st.restored_tabs.contains(tab)) {
++    if (GetTabWorkspace(tab) > 0) {
++      return;
++    }
++    auto prev_it = st.restored_tab_urls.find(tab);
++    if (prev_it != st.restored_tab_urls.end() && prev_it->second == url_spec) {
++      return;
++    }
++  }
++
++  // On a post-crash startup where a single blank NTP opens before the user
++  // clicks "Restore", do not consume any restore entries with that NTP.
++  if (!IsSessionRestoringForTabStrip(tab_strip) &&
++      tab_strip->GetTabCount() <= 1 && st.loaded_total_tabs > 1 &&
++      IsGenericNewTabOrBlankUrl(url_spec)) {
++    return;
++  }
++
++  if (st.pending_restore.empty() && st.persisted_url_workspaces.empty()) {
++    return;
++  }
++  if (base::TimeTicks::Now() > st.restore_deadline) {
++    st.pending_restore.clear();
++    st.persisted_url_workspaces.clear();
++    st.awaiting_nonzero_restore = false;
++    return;
++  }
++
++  auto it = st.pending_restore.end();
++  // 1. Match by exact index and exact URL.
++  for (auto iter = st.pending_restore.begin(); iter != st.pending_restore.end();
++       ++iter) {
++    if (iter->index == model_index && iter->url == url_spec) {
++      it = iter;
++      break;
++    }
++  }
++  // 2. Match by exact URL, preferring the closest index.
++  if (it == st.pending_restore.end()) {
++    int best_dist = std::numeric_limits<int>::max();
++    for (auto iter = st.pending_restore.begin();
++         iter != st.pending_restore.end(); ++iter) {
++      if (iter->url == url_spec) {
++        int dist = (iter->index >= 0) ? std::abs(iter->index - model_index) : 0;
++        if (!st.loaded_has_space_zero && dist > 2) {
++          continue;
++        }
++        if (dist < best_dist) {
++          best_dist = dist;
++          it = iter;
++        }
++      }
++    }
++  }
++
++  int matched_ws = -1;
++  if (it != st.pending_restore.end()) {
++    matched_ws = it->ws;
++    st.pending_restore.erase(it);
++  } else if (!IsGenericNewTabOrBlankUrl(url_spec)) {
++    if (auto url_it = st.persisted_url_workspaces.find(url_spec);
++        url_it != st.persisted_url_workspaces.end()) {
++      matched_ws = url_it->second;
++    }
++  }
++
++  st.restored_tab_urls[tab] = url_spec;
++  st.restored_tabs.insert(tab);
++  if (matched_ws < 0) {
++    return;
++  }
++
++  const int max_ws = std::max(0, velox::GetSpaceCount() - 1);
++  int restored_ws = std::clamp(matched_ws, 0, max_ws);
++
++  int prev_ws = GetTabWorkspace(tab);
++  if (prev_ws != restored_ws) {
++    RemoveTabFromWorkspaceStack(tab_strip, prev_ws, tab);
++  }
++  st.tab_workspaces[tab] = restored_ws;
++  RecordActiveTabInWorkspace(tab_strip, restored_ws, tab);
++
++  if (restored_ws > 0) {
++    bool still_has_pending_nonzero = false;
++    for (const auto& p : st.pending_restore) {
++      if (p.ws > 0) {
++        still_has_pending_nonzero = true;
++        break;
++      }
++    }
++    if (!still_has_pending_nonzero) {
++      st.awaiting_nonzero_restore = false;
++    } else {
++      st.restore_write_grace_until = base::TimeTicks::Now() + base::Seconds(5);
++    }
++  }
++
++  const bool is_active_tab =
++      tab->IsActive() ||
++      (tab_strip->GetActiveIndex().has_value() &&
++       static_cast<int>(tab_strip->GetActiveIndex().value()) == model_index);
++  if (is_active_tab) {
++    st.tabstrip_active_workspace[tab_strip] = restored_ws;
++  }
++  if (IsSessionRestoringForTabStrip(tab_strip)) {
++    // Batch per-tab Spaces layout and toolbar control updates until session
++    // restore completes so restoring N tabs performs a single layout pass.
++    st.deferred_restore_layout_pending = true;
++  } else {
++    if (tab->parent()) {
++      RefreshTabStripLayoutForSpaces(tab_strip);
++    }
++    NotifyVeloxSpacesControls();
++  }
++
++  if (!st.post_restore_sync_scheduled) {
++    st.post_restore_sync_scheduled = true;
++    base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
++        FROM_HERE,
++        base::BindOnce([]() {
++          auto& state = GetVeloxState();
++          state.post_restore_sync_scheduled = false;
++          state.deferred_restore_layout_pending = false;
++          if (browser_shutdown::IsTryingToQuit()) {
++            return;
++          }
++          for (const auto& [ts_const, container] : state.tabstrip_containers) {
++            TabStrip* ts = const_cast<TabStrip*>(ts_const);
++            if (!ts || IsTabStripClosingAll(ts)) {
++              continue;
++            }
++            if (std::optional<int> active_idx = ts->GetActiveIndex();
++                active_idx.has_value()) {
++              if (Tab* active_tab = SafeGetTab(ts, active_idx.value())) {
++                const int active_ws = GetTabWorkspace(active_tab);
++                state.tabstrip_active_workspace[ts] = active_ws;
++                auto& recent = state.recent_visited_tabs[{ts, active_ws}];
++                if (std::find(recent.begin(), recent.end(), active_tab) ==
++                    recent.end()) {
++                  recent.insert(recent.begin(), active_tab);
++                }
++              }
++            }
++            RefreshTabStripLayoutForSpaces(ts);
++          }
++          NotifyVeloxSpacesControls();
++          SaveTabSpaces();
++        }),
++        base::Milliseconds(800));
++  }
++}
++
++void OnTabDataChanged(TabStrip* tab_strip, const Tab* tab) {
++  if (!tab_strip || !tab || IsTabStripClosingAll(tab_strip)) {
++    return;
++  }
++  EnsureTabSpacesLoaded(tab_strip);
++  auto& st = GetVeloxState();
++  if (st.restore_eligible_tabs.contains(tab)) {
++    if (std::optional<int> idx = tab_strip->GetModelIndexOf(tab);
++        idx.has_value()) {
++      MaybeRestoreTabWorkspace(tab_strip, const_cast<Tab*>(tab), idx.value(),
++                               GURL());
++    }
++  }
++  if (IsSessionRestoringForTabStrip(tab_strip)) {
++    return;
++  }
++  ScheduleSaveTabSpaces();
++}
++
++void OnTabMoved(TabStrip* tab_strip) {
++  if (!tab_strip || IsTabStripClosingAll(tab_strip) ||
++      IsSessionRestoringForTabStrip(tab_strip)) {
++    return;
++  }
++  EnsureTabSpacesLoaded(tab_strip);
++  ScheduleSaveTabSpaces();
++}
++
++void UnregisterTabFromWorkspace(TabStrip* tab_strip, const Tab* tab) {
++  if (!tab) {
++    return;
++  }
++  auto& st = GetVeloxState();
++  int ws = GetTabWorkspace(tab);
++  const bool closing_all = !tab_strip || IsTabStripClosingAll(tab_strip) ||
++                           browser_shutdown::IsTryingToQuit();
++  if (tab_strip) {
++    if (!closing_all) {
++      st.last_removed_workspace[tab_strip] = ws;
++    }
++    RemoveTabFromWorkspaceStack(tab_strip, ws, tab);
++    for (int w = 0; w < 9; ++w) {
++      auto key = std::make_pair(static_cast<const TabStrip*>(tab_strip), w);
++      if (st.last_active_tab[key] == tab) {
++        st.last_active_tab.erase(key);
++      }
++    }
++  }
++  st.tab_workspaces.erase(tab);
++  st.tab_to_tabstrip.erase(tab);
++  st.restore_eligible_tabs.erase(tab);
++  st.restored_tabs.erase(tab);
++  st.restored_tab_urls.erase(tab);
++
++  if (tab_strip && !closing_all && !IsSessionRestoringForTabStrip(tab_strip)) {
++    SaveTabSpaces();
++  }
++}
++
++void RefreshTabStripLayoutForSpaces(TabStrip* tab_strip) {
++  if (!tab_strip || IsTabStripClosingAll(tab_strip) ||
++      browser_shutdown::IsTryingToQuit()) {
++    return;
++  }
++  auto& st = GetVeloxState();
++  auto it = st.tabstrip_containers.find(tab_strip);
++  if (it != st.tabstrip_containers.end() && it->second) {
++    it->second->CompleteAnimationAndLayout();
++    it->second->InvalidateLayout();
++  }
++  tab_strip->InvalidateLayout();
++  tab_strip->SchedulePaint();
++}
++
++void FlushDeferredSessionRestoreSpacesLayout() {
++  auto& st = GetVeloxState();
++  if (!st.deferred_restore_layout_pending ||
++      browser_shutdown::IsTryingToQuit()) {
++    return;
++  }
++  st.deferred_restore_layout_pending = false;
++  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
++      FROM_HERE,
++      base::BindOnce([]() {
++        if (browser_shutdown::IsTryingToQuit()) {
++          return;
++        }
++        auto& state = GetVeloxState();
++        for (const auto& [ts_const, container] : state.tabstrip_containers) {
++          TabStrip* ts = const_cast<TabStrip*>(ts_const);
++          if (!ts || IsTabStripClosingAll(ts)) {
++            continue;
++          }
++          if (std::optional<int> active_idx = ts->GetActiveIndex();
++              active_idx.has_value()) {
++            if (Tab* active_tab = SafeGetTab(ts, active_idx.value())) {
++              state.tabstrip_active_workspace[ts] =
++                  GetTabWorkspace(active_tab);
++            }
++          }
++          RefreshTabStripLayoutForSpaces(ts);
++        }
++        NotifyVeloxSpacesControls();
++      }));
++}
++
++void SwitchWorkspace(Browser* browser, int workspace_id) {
++  if (!browser || workspace_id < 0 || workspace_id >= velox::GetSpaceCount()) {
++    return;
++  }
++  BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(browser);
++  if (!browser_view || !browser_view->tabstrip()) {
++    return;
++  }
++  TabStrip* tab_strip = browser_view->tabstrip();
++  auto& st = GetVeloxState();
++  if (GetTabStripActiveWorkspace(tab_strip) == workspace_id) {
++    return;
++  }
++
++  st.switching_workspace = true;
++  st.tabstrip_active_workspace[tab_strip] = workspace_id;
++
++  TabStripModel* model = browser->tab_strip_model();
++
++  int target_index = -1;
++  // 1. Check workspace active stack
++  auto& stack = st.workspace_active_stack[{tab_strip, workspace_id}];
++  for (auto it = stack.begin(); it != stack.end();) {
++    const Tab* cand = *it;
++    bool found = false;
++    if (cand && !cand->closing() && GetTabWorkspace(cand) == workspace_id) {
++      for (int i = 0; i < tab_strip->GetTabCount(); ++i) {
++        if (SafeGetTab(tab_strip, i) == cand) {
++          target_index = i;
++          found = true;
++          break;
++        }
++      }
++    }
++    if (found) {
++      break;
++    } else {
++      it = stack.erase(it);
++    }
++  }
++
++  // 2. Check last_active_tab
++  if (target_index == -1) {
++    const Tab* preferred_tab = st.last_active_tab[{tab_strip, workspace_id}];
++    if (preferred_tab && !preferred_tab->closing() &&
++        GetTabWorkspace(preferred_tab) == workspace_id) {
++      for (int i = 0; i < tab_strip->GetTabCount(); ++i) {
++        if (SafeGetTab(tab_strip, i) == preferred_tab) {
++          target_index = i;
++          break;
++        }
++      }
++    }
++  }
++
++  // 3. Fall back to MRU via GetLastActiveTimeTicks()
++  if (target_index == -1) {
++    int mru_index = -1;
++    base::TimeTicks mru_time;
++    for (int i = 0; i < tab_strip->GetTabCount(); ++i) {
++      Tab* t = SafeGetTab(tab_strip, i);
++      if (!t || t->closing() || GetTabWorkspace(t) != workspace_id) {
++        continue;
++      }
++      WebContents* wc =
++          (model && model->ContainsIndex(i)) ? model->GetWebContentsAt(i)
++                                             : nullptr;
++      const base::TimeTicks t_active =
++          wc ? wc->GetLastActiveTimeTicks() : base::TimeTicks();
++      if (mru_index == -1 || t_active > mru_time) {
++        mru_index = i;
++        mru_time = t_active;
++      }
++    }
++    target_index = mru_index;
++  }
++
++  if (model && model->IsSplitSelectionActive()) {
++    model->CancelSplitSelection();
++  }
++  if (target_index != -1 && model && model->ContainsIndex(target_index)) {
++    model->ActivateTabAt(target_index);
++  } else {
++    chrome::NewTab(browser);
++  }
++
++  // Freeze inactive workspace background tabs (if not playing audio) to save RAM
++  if (model) {
++    for (int i = 0; i < model->count() && i < tab_strip->GetTabCount(); ++i) {
++      WebContents* wc = model->GetWebContentsAt(i);
++      Tab* t = SafeGetTab(tab_strip, i);
++      if (!wc || !t) {
++        continue;
++      }
++      int w = GetTabWorkspace(t);
++      if (w != workspace_id) {
++        if (wc->GetVisibility() == content::Visibility::HIDDEN &&
++            !wc->IsCurrentlyAudible() && !wc->IsBeingCaptured()) {
++          wc->SetPageFrozen(true);
++        }
++      }
++    }
++  }
++
++  st.switching_workspace = false;
++  RefreshTabStripLayoutForSpaces(tab_strip);
++  NotifyVeloxSpacesControls();
++  EnsureTabSpacesLoaded(tab_strip);
++  ScheduleSaveTabSpaces();
++}
++
++void MoveTabsToEndOfWorkspace(TabStrip* tab_strip,
++                             TabStripModel* model,
++                             const std::vector<Tab*>& moving_tabs,
++                             int target_workspace) {
++  if (!tab_strip || !model || moving_tabs.empty()) {
++    return;
++  }
++
++  for (Tab* moving_tab : moving_tabs) {
++    if (!moving_tab || moving_tab->closing()) {
++      continue;
++    }
++    auto opt_current_idx = tab_strip->GetModelIndexOf(moving_tab);
++    if (!opt_current_idx.has_value()) {
++      continue;
++    }
++    int current_idx = opt_current_idx.value();
++    const bool is_pinned = moving_tab->data().pinned;
++
++    int last_target_idx = -1;
++    for (int i = model->count() - 1; i >= 0; --i) {
++      if (i == current_idx) {
++        continue;
++      }
++      Tab* t = SafeGetTab(tab_strip, i);
++      if (t && !t->closing() && GetTabWorkspace(t) == target_workspace &&
++          t->data().pinned == is_pinned) {
++        last_target_idx = i;
++        break;
++      }
++    }
++
++    int to_idx = -1;
++    if (last_target_idx != -1) {
++      if (current_idx < last_target_idx) {
++        to_idx = last_target_idx;
++      } else {
++        to_idx = last_target_idx + 1;
++      }
++    } else {
++      if (is_pinned) {
++        to_idx = std::max(0, model->IndexOfFirstNonPinnedTab() - 1);
++      } else {
++        to_idx = model->count() - 1;
++      }
++    }
++
++    if (to_idx >= 0 && to_idx < model->count() && to_idx != current_idx) {
++      model->MoveWebContentsAt(current_idx, to_idx, /*select_after_move=*/false);
++    }
++  }
++}
++
++void MoveActiveTabToWorkspace(Browser* browser, int workspace_id) {
++  if (!browser || workspace_id < 0 || workspace_id >= velox::GetSpaceCount()) {
++    return;
++  }
++  BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(browser);
++  if (!browser_view || !browser_view->tabstrip()) {
++    return;
++  }
++  TabStrip* tab_strip = browser_view->tabstrip();
++  TabStripModel* model = browser->tab_strip_model();
++  EnsureTabSpacesLoaded(tab_strip);
++  auto& st = GetVeloxState();
++  st.user_modified_spaces = true;
++  st.awaiting_nonzero_restore = false;
++  int active_idx = model->active_index();
++  if (active_idx >= 0 && active_idx < tab_strip->GetTabCount()) {
++    std::vector<Tab*> moving_tabs;
++    int partner_idx = model->GetSplitPartnerIndex(active_idx);
++    if (partner_idx != TabStripModel::kNoTab &&
++        partner_idx < tab_strip->GetTabCount()) {
++      if (Tab* partner_tab = SafeGetTab(tab_strip, partner_idx)) {
++        int old_partner_ws = GetTabWorkspace(partner_tab);
++        RemoveTabFromWorkspaceStack(tab_strip, old_partner_ws, partner_tab);
++        st.tab_workspaces[partner_tab] = workspace_id;
++        RecordActiveTabInWorkspace(tab_strip, workspace_id, partner_tab);
++        moving_tabs.push_back(partner_tab);
++      }
++    }
++    Tab* active_tab = SafeGetTab(tab_strip, active_idx);
++    if (active_tab) {
++      int old_ws = GetTabWorkspace(active_tab);
++      RemoveTabFromWorkspaceStack(tab_strip, old_ws, active_tab);
++      auto old_key =
++          std::make_pair(static_cast<const TabStrip*>(tab_strip), old_ws);
++      if (st.last_active_tab[old_key] == active_tab) {
++        st.last_active_tab.erase(old_key);
++      }
++      st.tab_workspaces[active_tab] = workspace_id;
++      RecordActiveTabInWorkspace(tab_strip, workspace_id, active_tab);
++      auto new_key =
++          std::make_pair(static_cast<const TabStrip*>(tab_strip), workspace_id);
++      st.last_active_tab[new_key] = active_tab;
++      moving_tabs.push_back(active_tab);
++    }
++    MoveTabsToEndOfWorkspace(tab_strip, model, moving_tabs, workspace_id);
++  }
++  SwitchWorkspace(browser, workspace_id);
++  SaveTabSpaces();
++}
++
++int GetTabWorkspaceAtIndex(TabStripModel* model, int tab_index) {
++  if (!model || tab_index < 0 || tab_index >= model->count()) {
++    return 0;
++  }
++  content::WebContents* contents = model->GetWebContentsAt(tab_index);
++  if (!contents) {
++    return 0;
++  }
++  Browser* browser = chrome::FindBrowserWithTab(contents);
++  if (!browser) {
++    return 0;
++  }
++  BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(browser);
++  if (!browser_view || !browser_view->tabstrip()) {
++    return 0;
++  }
++  TabStrip* tab_strip = browser_view->tabstrip();
++  Tab* tab = SafeGetTab(tab_strip, tab_index);
++  return tab ? GetTabWorkspace(tab) : 0;
++}
++
++void MoveTabAtIndexToWorkspace(TabStripModel* model, int tab_index, int target_workspace) {
++  if (!model || tab_index < 0 || tab_index >= model->count() ||
++      target_workspace < 0 || target_workspace >= velox::GetSpaceCount()) {
++    return;
++  }
++  content::WebContents* contents = model->GetWebContentsAt(tab_index);
++  if (!contents) {
++    return;
++  }
++  Browser* browser = chrome::FindBrowserWithTab(contents);
++  if (!browser) {
++    return;
++  }
++  BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(browser);
++  if (!browser_view || !browser_view->tabstrip()) {
++    return;
++  }
++  TabStrip* tab_strip = browser_view->tabstrip();
++  EnsureTabSpacesLoaded(tab_strip);
++  auto& st = GetVeloxState();
++  st.user_modified_spaces = true;
++  st.awaiting_nonzero_restore = false;
++
++  // Determine all tab indices to move (if multi-selected, move all selected tabs)
++  std::vector<int> indices;
++  if (model->IsTabSelected(tab_index)) {
++    for (int sel : model->selection_model().selected_indices()) {
++      indices.push_back(sel);
++    }
++  } else {
++    indices.push_back(tab_index);
++  }
++
++  // Also include split screen partners if any of the moving tabs are split
++  std::set<int> all_indices_to_move(indices.begin(), indices.end());
++  for (int idx : indices) {
++    int partner = model->GetSplitPartnerIndex(idx);
++    if (partner != TabStripModel::kNoTab && partner >= 0 && partner < model->count()) {
++      all_indices_to_move.insert(partner);
++    }
++  }
++
++  int current_active_ws = GetTabStripActiveWorkspace(tab_strip);
++  bool moved_active_tab = false;
++
++  std::vector<Tab*> moving_tabs;
++  for (int idx : all_indices_to_move) {
++    Tab* tab = SafeGetTab(tab_strip, idx);
++    if (!tab) {
++      continue;
++    }
++    int old_ws = GetTabWorkspace(tab);
++    if (old_ws == target_workspace) {
++      continue;
++    }
++    RemoveTabFromWorkspaceStack(tab_strip, old_ws, tab);
++    auto old_key = std::make_pair(static_cast<const TabStrip*>(tab_strip), old_ws);
++    if (st.last_active_tab[old_key] == tab) {
++      st.last_active_tab.erase(old_key);
++    }
++    st.tab_workspaces[tab] = target_workspace;
++    RecordActiveTabInWorkspace(tab_strip, target_workspace, tab);
++    moving_tabs.push_back(tab);
++    if (tab->IsActive()) {
++      moved_active_tab = true;
++    }
++  }
++
++  MoveTabsToEndOfWorkspace(tab_strip, model, moving_tabs, target_workspace);
++
++  // If the active tab was moved out of the current workspace,
++  // activate another tab remaining in the current workspace.
++  if (moved_active_tab) {
++    auto& stack = st.workspace_active_stack[{tab_strip, current_active_ws}];
++    Tab* next_tab_to_activate = nullptr;
++    while (!stack.empty()) {
++      const Tab* cand = stack.front();
++      stack.erase(stack.begin());
++      for (int i = 0; i < tab_strip->GetTabCount(); ++i) {
++        Tab* t = SafeGetTab(tab_strip, i);
++        if (t == cand && GetTabWorkspace(t) == current_active_ws) {
++          next_tab_to_activate = t;
++          break;
++        }
++      }
++      if (next_tab_to_activate) {
++        break;
++      }
++    }
++
++    if (next_tab_to_activate) {
++      auto opt_idx = tab_strip->GetModelIndexOf(next_tab_to_activate);
++      if (opt_idx.has_value()) {
++        model->ActivateTabAt(opt_idx.value());
++      }
++    } else {
++      int found_idx = -1;
++      for (int i = 0; i < tab_strip->GetTabCount(); ++i) {
++        Tab* t = SafeGetTab(tab_strip, i);
++        if (t && GetTabWorkspace(t) == current_active_ws) {
++          found_idx = i;
++          break;
++        }
++      }
++      if (found_idx != -1) {
++        model->ActivateTabAt(found_idx);
++      } else {
++        model->delegate()->AddTabAt(GURL(chrome::kChromeUINewTabURL), -1, true);
++        if (tab_strip->GetActiveIndex().has_value()) {
++          Tab* new_tab = SafeGetTab(tab_strip, tab_strip->GetActiveIndex().value());
++          if (new_tab) {
++            st.tab_workspaces[new_tab] = current_active_ws;
++            RecordActiveTabInWorkspace(tab_strip, current_active_ws, new_tab);
++          }
++        }
++      }
++    }
++  }
++
++  RefreshTabStripLayoutForSpaces(tab_strip);
++  NotifyVeloxSpacesControls();
++  SaveTabSpaces();
++}
++
++void OnTabStripActiveTabChanged(TabStrip* tab_strip, const Tab* new_active_tab) {
++  if (!tab_strip || !new_active_tab || IsTabStripClosingAll(tab_strip) ||
++      browser_shutdown::IsTryingToQuit()) {
++    return;
++  }
++  auto& st = GetVeloxState();
++  int new_ws = GetTabWorkspace(new_active_tab);
++  st.last_active_tab[{tab_strip, new_ws}] = new_active_tab;
++  RecordActiveTabInWorkspace(tab_strip, new_ws, new_active_tab);
++
++  if (!IsSessionRestoringForTabStrip(tab_strip)) {
++    auto& recent = st.recent_visited_tabs[{tab_strip, new_ws}];
++    auto rit = std::find(recent.begin(), recent.end(), new_active_tab);
++    if (rit != recent.end()) {
++      recent.erase(rit);
++    }
++    recent.insert(recent.begin(), new_active_tab);
++    if (recent.size() > 6) {
++      recent.resize(6);
++    }
++    for (int i = 0; i < tab_strip->GetTabCount(); ++i) {
++      if (Tab* t = SafeGetTab(tab_strip, i)) {
++        if (GetTabWorkspace(t) == new_ws) {
++          t->SchedulePaint();
++        }
++      }
++    }
++  }
++
++  if (st.switching_workspace) {
++    return;
++  }
++
++  int current_ws = GetTabStripActiveWorkspace(tab_strip);
++  int removed_ws = -1;
++  auto rem_it = st.last_removed_workspace.find(tab_strip);
++  if (rem_it != st.last_removed_workspace.end()) {
++    removed_ws = rem_it->second;
++    st.last_removed_workspace.erase(rem_it);
++  }
++
++  if (new_ws != current_ws) {
++    if (removed_ws == current_ws) {
++      // Check if there is still another tab in current_ws.
++      // Prefer the MRU active tab from that workspace's stack instead of index 0.
++      int remaining_in_current = -1;
++      auto& stack = st.workspace_active_stack[{tab_strip, current_ws}];
++      for (auto it = stack.begin(); it != stack.end();) {
++        const Tab* cand = *it;
++        bool found = false;
++        if (cand && !cand->closing() && GetTabWorkspace(cand) == current_ws) {
++          for (int i = 0; i < tab_strip->GetTabCount(); ++i) {
++            if (SafeGetTab(tab_strip, i) == cand) {
++              remaining_in_current = i;
++              found = true;
++              break;
++            }
++          }
++        }
++        if (found) {
++          break;
++        } else {
++          it = stack.erase(it);
++        }
++      }
++      if (remaining_in_current == -1) {
++        for (int i = tab_strip->GetTabCount() - 1; i >= 0; --i) {
++          Tab* t = SafeGetTab(tab_strip, i);
++          if (t && !t->closing() && GetTabWorkspace(t) == current_ws) {
++            remaining_in_current = i;
++            break;
++          }
++        }
++      }
++      if (remaining_in_current != -1 && tab_strip->GetBrowserWindowInterface()) {
++        TabStripModel* model =
++            tab_strip->GetBrowserWindowInterface()->GetTabStripModel();
++        const int target_idx = remaining_in_current;
++        base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
++            FROM_HERE,
++            base::BindOnce(
++                [](TabStrip* ts, TabStripModel* m, int target) {
++                  if (!ts || !m ||
++                      !GetVeloxState().tabstrip_containers.contains(ts) ||
++                      IsTabStripClosingAll(ts) || !m->ContainsIndex(target)) {
++                    return;
++                  }
++                  m->ActivateTabAt(target);
++                  RefreshTabStripLayoutForSpaces(ts);
++                },
++                base::Unretained(tab_strip), base::Unretained(model),
++                target_idx));
++        return;
++      }
++    }
++
++    st.tabstrip_active_workspace[tab_strip] = new_ws;
++    RefreshTabStripLayoutForSpaces(tab_strip);
++    NotifyVeloxSpacesControls();
++    if (!IsSessionRestoringForTabStrip(tab_strip)) {
++      ScheduleSaveTabSpaces();
++    }
++    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
++        FROM_HERE,
++        base::BindOnce(
++            [](TabStrip* ts) {
++              if (GetVeloxState().tabstrip_containers.contains(ts)) {
++                RefreshTabStripLayoutForSpaces(ts);
++              }
++            },
++            base::Unretained(tab_strip)));
++  }
++}
++
++bool DeleteSpace(int space_idx, Browser* browser) {
++  auto& st = GetVeloxState();
++  if (st.space_names.size() <= 1 || space_idx < 0 ||
++      space_idx >= static_cast<int>(st.space_names.size())) {
++    return false;
++  }
++  st.user_modified_spaces = true;
++  st.awaiting_nonzero_restore = false;
++
++  if (browser) {
++    BrowserView* bv = BrowserView::GetBrowserViewForBrowser(browser);
++    TabStrip* tab_strip = bv ? bv->tabstrip() : nullptr;
++    if (tab_strip) {
++      EnsureTabSpacesLoaded(tab_strip);
++      for (int i = 0; i < tab_strip->GetTabCount(); ++i) {
++        Tab* t = SafeGetTab(tab_strip, i);
++        if (!t) {
++          continue;
++        }
++        int t_ws = GetTabWorkspace(t);
++        if (t_ws == space_idx) {
++          st.tab_workspaces[t] = 0;
++        } else if (t_ws > space_idx) {
++          st.tab_workspaces[t] = t_ws - 1;
++        }
++      }
++    }
++  }
++
++  st.space_names.erase(st.space_names.begin() + space_idx);
++  SaveSpaceNames(browser ? browser->profile() : nullptr);
++
++  if (browser) {
++    BrowserView* bv = BrowserView::GetBrowserViewForBrowser(browser);
++    TabStrip* tab_strip = bv ? bv->tabstrip() : nullptr;
++    if (tab_strip) {
++      int active = GetTabStripActiveWorkspace(tab_strip);
++      if (active == space_idx) {
++        SwitchWorkspace(browser, std::max(0, space_idx - 1));
++      } else if (active > space_idx) {
++        SwitchWorkspace(browser, active - 1);
++      }
++    }
++  }
++
++  NotifyVeloxSpacesControls();
++  SaveTabSpaces();
++  return true;
++}
++
++}  // namespace velox
++
++void VeloxSwitchWorkspaceCommand(Browser* browser, int workspace_id) {
++  velox::SwitchWorkspace(browser, workspace_id);
++}
++
++namespace chrome {
++void VeloxSwitchWorkspaceCommand(Browser* browser, int workspace_id) {
++  velox::SwitchWorkspace(browser, workspace_id);
++}
++}  // namespace chrome
++
++// ============================================================================
++// VeloxRenameSpaceBubble: Glassmorphic Rename Dialog for Spaces
++// ============================================================================
++class VeloxRenameSpaceBubble : public views::BubbleDialogDelegateView,
++                               public views::TextfieldController {
++  METADATA_HEADER(VeloxRenameSpaceBubble, views::BubbleDialogDelegateView)
++
++ public:
++  static void Show(views::View* anchor_view,
++                   Browser* browser,
++                   int space_index) {
++    auto& st = GetVeloxState();
++    if (st.active_rename_bubble_widget) {
++      st.active_rename_bubble_widget->Close();
++      st.active_rename_bubble_widget = nullptr;
++    }
++    auto bubble = std::make_unique<VeloxRenameSpaceBubble>(anchor_view, browser,
++                                                           space_index);
++    views::Widget* widget =
++        views::BubbleDialogDelegateView::CreateBubble(std::move(bubble));
++    st.active_rename_bubble_widget = widget;
++    widget->Show();
++  }
++
++  VeloxRenameSpaceBubble(views::View* anchor_view,
++                         Browser* browser,
++                         int space_index)
++      : BubbleDialogDelegateView(anchor_view, views::BubbleBorder::TOP_LEFT),
++        browser_(browser),
++        space_index_(space_index) {
++    SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
++    set_margins(gfx::Insets::VH(16, 20));
++    set_color(SkColorSetRGB(13, 17, 26));
++    SetTitle(u"Velox Spaces");
++    SetShowTitle(false);
++    SetShowCloseButton(true);
++  }
++
++  ~VeloxRenameSpaceBubble() override {
++    if (GetVeloxState().active_rename_bubble_widget == GetWidget()) {
++      GetVeloxState().active_rename_bubble_widget = nullptr;
++    }
++  }
++
++  void Init() override {
++    auto* layout = SetLayoutManager(std::make_unique<views::BoxLayout>(
++        views::BoxLayout::Orientation::kVertical, gfx::Insets(), 10));
++    layout->set_cross_axis_alignment(
++        views::BoxLayout::CrossAxisAlignment::kStretch);
++
++    // Title label
++    auto* title_label = AddChildView(std::make_unique<views::Label>(
++        u"Rename Space " + base::NumberToString16(space_index_ + 1),
++        views::style::CONTEXT_DIALOG_TITLE, views::style::STYLE_PRIMARY));
++    title_label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
++    title_label->SetEnabledColor(SkColorSetRGB(241, 245, 249));
++    title_label->SetFontList(title_label->font_list().Derive(
++        2, gfx::Font::NORMAL, gfx::Font::Weight::BOLD));
++
++    auto* desc_label = AddChildView(std::make_unique<views::Label>(
++        u"Choose a name that fits your workflow (e.g. Work, Gaming, Dev, Study):",
++        views::style::CONTEXT_LABEL, views::style::STYLE_SECONDARY));
++    desc_label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
++    desc_label->SetEnabledColor(SkColorSetRGB(148, 163, 184));
++
++    // Input text field
++    name_field_ = AddChildView(std::make_unique<views::Textfield>());
++    name_field_->SetText(velox::GetSpaceName(space_index_));
++    name_field_->SetPlaceholderText(u"Enter space name...");
++    name_field_->SetController(this);
++    name_field_->SelectAll(false);
++
++    // Quick suggestion chips
++    auto* chips_label = AddChildView(std::make_unique<views::Label>(
++        u"Quick Presets:", views::style::CONTEXT_LABEL,
++        views::style::STYLE_SECONDARY));
++    chips_label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
++    chips_label->SetEnabledColor(SkColorSetRGB(100, 116, 139));
++
++    auto* chips_row = AddChildView(std::make_unique<views::View>());
++    auto* chips_layout = chips_row->SetLayoutManager(
++        std::make_unique<views::BoxLayout>(
++            views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 6));
++    chips_layout->set_cross_axis_alignment(
++        views::BoxLayout::CrossAxisAlignment::kCenter);
++
++    const std::vector<std::u16string> presets = {
++        u"Work", u"Personal", u"Gaming", u"Dev", u"Study", u"Focus"};
++    for (const auto& preset : presets) {
++      auto* chip = chips_row->AddChildView(std::make_unique<views::MdTextButton>(
++          base::BindRepeating(&VeloxRenameSpaceBubble::OnPresetClicked,
++                              base::Unretained(this), preset),
++          preset));
++      chip->SetCustomPadding(gfx::Insets::VH(2, 7));
++    }
++
++    // Button row
++    auto* button_row = AddChildView(std::make_unique<views::View>());
++    auto* row_layout = button_row->SetLayoutManager(
++        std::make_unique<views::BoxLayout>(
++            views::BoxLayout::Orientation::kHorizontal,
++            gfx::Insets::TLBR(6, 0, 0, 0), 8));
++    row_layout->set_main_axis_alignment(views::BoxLayout::MainAxisAlignment::kEnd);
++
++    auto* reset_btn = button_row->AddChildView(std::make_unique<views::MdTextButton>(
++        base::BindRepeating(&VeloxRenameSpaceBubble::OnResetDefault,
++                            base::Unretained(this)),
++        u"Default"));
++    reset_btn->SetTooltipText(u"Reset this space back to default name");
++
++    button_row->AddChildView(std::make_unique<views::MdTextButton>(
++        base::BindRepeating(&VeloxRenameSpaceBubble::OnCancel,
++                            base::Unretained(this)),
++        u"Cancel"));
++
++    auto* save_btn = button_row->AddChildView(std::make_unique<views::MdTextButton>(
++        base::BindRepeating(&VeloxRenameSpaceBubble::OnSave,
++                            base::Unretained(this)),
++        u"Save Space"));
++    save_btn->SetStyle(ui::ButtonStyle::kProminent);
++  }
++
++  views::View* GetInitiallyFocusedView() override { return name_field_; }
++
++  bool HandleKeyEvent(views::Textfield* sender,
++                      const ui::KeyEvent& key_event) override {
++    if (key_event.type() == ui::EventType::kKeyPressed &&
++        key_event.key_code() == ui::VKEY_RETURN) {
++      OnSave();
++      return true;
++    }
++    return false;
++  }
++
++ private:
++  void OnPresetClicked(const std::u16string& preset) {
++    if (name_field_) {
++      name_field_->SetText(preset);
++      name_field_->SelectAll(false);
++    }
++  }
++
++  void OnResetDefault() {
++    const std::u16string kDefaults[3] = {u"General", u"Work", u"Focus"};
++    std::u16string def_name =
++        (space_index_ < 3)
++            ? kDefaults[space_index_]
++            : (u"Space " + base::NumberToString16(space_index_ + 1));
++    if (name_field_) {
++      name_field_->SetText(def_name);
++    }
++    OnSave();
++  }
++
++  void OnCancel() {
++    if (GetWidget()) {
++      GetWidget()->Close();
++    }
++  }
++
++  void OnSave() {
++    std::u16string text = name_field_ ? name_field_->GetText() : u"";
++    base::TrimWhitespace(text, base::TRIM_ALL, &text);
++    if (text.empty()) {
++      const std::u16string kDefaults[3] = {u"General", u"Work", u"Focus"};
++      text = (space_index_ < 3)
++                 ? kDefaults[space_index_]
++                 : (u"Space " + base::NumberToString16(space_index_ + 1));
++    }
++    if (text.length() > 14) {
++      text = text.substr(0, 14);
++    }
++    velox::SetSpaceName(space_index_, text,
++                        browser_ ? browser_->profile() : nullptr);
++    if (GetWidget()) {
++      GetWidget()->Close();
++    }
++  }
++
++  raw_ptr<Browser> browser_ = nullptr;
++  int space_index_ = 0;
++  raw_ptr<views::Textfield> name_field_ = nullptr;
++};
++
++BEGIN_METADATA(VeloxRenameSpaceBubble)
++END_METADATA
++
++// ============================================================================
++// VeloxSpaceTabRowView: Interactive Row for Workspace Tabs in Preview Bubble
++// ============================================================================
++class VeloxSpaceTabRowView : public views::Button {
++  METADATA_HEADER(VeloxSpaceTabRowView, views::Button)
++
++ public:
++  VeloxSpaceTabRowView(Browser* browser,
++                       int space_index,
++                       int model_index,
++                       const std::u16string& title,
++                       const GURL& url,
++                       const ui::ImageModel& favicon,
++                       bool is_active,
++                       bool is_audio,
++                       base::RepeatingClosure click_cb)
++      : views::Button(base::BindRepeating(&VeloxSpaceTabRowView::OnRowClicked,
++                                          base::Unretained(this))),
++        browser_(browser),
++        space_index_(space_index),
++        model_index_(model_index),
++        is_active_(is_active),
++        click_cb_(std::move(click_cb)) {
++    SetFocusBehavior(views::View::FocusBehavior::NEVER);
++    SetPreferredSize(gfx::Size(270, 34));
++
++    auto* layout = SetLayoutManager(std::make_unique<views::BoxLayout>(
++        views::BoxLayout::Orientation::kHorizontal, gfx::Insets::VH(3, 8), 8));
++    layout->set_cross_axis_alignment(
++        views::BoxLayout::CrossAxisAlignment::kCenter);
++
++    // 1. Favicon
++    auto* icon_view = AddChildView(std::make_unique<views::ImageView>());
++    icon_view->SetImageSize(gfx::Size(16, 16));
++    if (!favicon.IsEmpty()) {
++      icon_view->SetImage(favicon);
++    } else {
++      icon_view->SetImage(ui::ImageModel::FromVectorIcon(
++          vector_icons::kGlobeIcon, SkColorSetRGB(148, 163, 184), 16));
++    }
++
++    // 2. Title & Domain container (Vertical)
++    auto* text_col = AddChildView(std::make_unique<views::View>());
++    auto* text_layout = text_col->SetLayoutManager(
++        std::make_unique<views::BoxLayout>(
++            views::BoxLayout::Orientation::kVertical, gfx::Insets(), 1));
++    text_layout->set_cross_axis_alignment(
++        views::BoxLayout::CrossAxisAlignment::kStart);
++    layout->SetFlexForView(text_col, 1);
++
++    std::u16string disp_title = title.empty() ? u"New Tab" : title;
++    auto* title_lbl = text_col->AddChildView(std::make_unique<views::Label>(
++        disp_title, views::style::CONTEXT_LABEL, views::style::STYLE_PRIMARY));
++    title_lbl->SetHorizontalAlignment(gfx::ALIGN_LEFT);
++    title_lbl->SetElideBehavior(gfx::ELIDE_TAIL);
++    title_lbl->SetMaximumWidthSingleLine(180);
++    title_lbl->SetEnabledColor(is_active_ ? SkColorSetRGB(255, 255, 255)
++                                          : SkColorSetRGB(226, 232, 240));
++    title_lbl->SetFontList(title_lbl->font_list().Derive(
++        -1, gfx::Font::NORMAL,
++        is_active_ ? gfx::Font::Weight::BOLD : gfx::Font::Weight::NORMAL));
++
++    std::string host = url.host();
++    if (host.empty() && url.SchemeIs("chrome")) {
++      host = "velox";
++    }
++    if (!host.empty()) {
++      auto* host_lbl = text_col->AddChildView(std::make_unique<views::Label>(
++          base::UTF8ToUTF16(host), views::style::CONTEXT_LABEL,
++          views::style::STYLE_SECONDARY));
++      host_lbl->SetHorizontalAlignment(gfx::ALIGN_LEFT);
++      host_lbl->SetElideBehavior(gfx::ELIDE_TAIL);
++      host_lbl->SetMaximumWidthSingleLine(180);
++      host_lbl->SetEnabledColor(SkColorSetRGB(100, 116, 139));
++      host_lbl->SetFontList(host_lbl->font_list().Derive(
++          -2, gfx::Font::NORMAL, gfx::Font::Weight::NORMAL));
++    }
++
++    // 3. Audio Indicator if playing
++    if (is_audio) {
++      auto* audio_lbl = AddChildView(std::make_unique<views::Label>(
++          u"🔊", views::style::CONTEXT_LABEL, views::style::STYLE_PRIMARY));
++      audio_lbl->SetTooltipText(u"Playing Audio");
++    }
++
++    // 4. Active tab indicator
++    if (is_active_) {
++      auto* active_badge = AddChildView(std::make_unique<views::Label>(
++          u"• Active", views::style::CONTEXT_LABEL, views::style::STYLE_SECONDARY));
++      active_badge->SetEnabledColor(SkColorSetRGB(59, 130, 246));
++      active_badge->SetFontList(active_badge->font_list().Derive(
++          -2, gfx::Font::NORMAL, gfx::Font::Weight::SEMIBOLD));
++    }
++  }
++
++  void OnPaintBackground(gfx::Canvas* canvas) override {
++    const bool is_hovered = GetState() == views::Button::STATE_HOVERED ||
++                            GetState() == views::Button::STATE_PRESSED;
++    if (is_hovered || is_active_) {
++      gfx::ScopedCanvas scoped(canvas);
++      const float s = canvas->UndoDeviceScaleFactor();
++      gfx::RectF rf(GetLocalBounds());
++      rf.Scale(s);
++      rf.Inset(1.0f * s);
++      SkRRect rrect;
++      rrect.setRectXY(gfx::RectFToSkRect(rf), 6.0f * s, 6.0f * s);
++
++      cc::PaintFlags flags;
++      flags.setAntiAlias(true);
++      flags.setStyle(cc::PaintFlags::kFill_Style);
++      if (is_hovered) {
++        flags.setColor(is_active_ ? SkColorSetARGB(80, 59, 130, 246)
++                                  : SkColorSetARGB(35, 255, 255, 255));
++      } else {
++        flags.setColor(SkColorSetARGB(35, 59, 130, 246));
++      }
++      canvas->sk_canvas()->drawRRect(rrect, flags);
++    }
++  }
++
++ private:
++  void OnRowClicked() {
++    if (browser_) {
++      velox::SwitchWorkspace(browser_, space_index_);
++      if (browser_->tab_strip_model() &&
++          browser_->tab_strip_model()->ContainsIndex(model_index_)) {
++        browser_->tab_strip_model()->ActivateTabAt(model_index_);
++      }
++    }
++    if (click_cb_) {
++      click_cb_.Run();
++    }
++  }
++
++  raw_ptr<Browser> browser_ = nullptr;
++  int space_index_ = 0;
++  int model_index_ = 0;
++  bool is_active_ = false;
++  base::RepeatingClosure click_cb_;
++};
++
++BEGIN_METADATA(VeloxSpaceTabRowView)
++END_METADATA
++
++// ============================================================================
++// VeloxSpaceTabPreviewBubble: Hover Preview Card for Workspace Tabs
++// ============================================================================
++class VeloxSpaceTabPreviewBubble : public views::BubbleDialogDelegateView {
++  METADATA_HEADER(VeloxSpaceTabPreviewBubble, views::BubbleDialogDelegateView)
++
++ public:
++  static void Show(views::View* anchor_view, Browser* browser, int space_index) {
++    auto& st = GetVeloxState();
++    if (st.active_preview_bubble_widget) {
++      if (st.active_preview_space == space_index) {
++        return;
++      }
++      ClosePreview();
++    }
++
++    auto bubble = std::make_unique<VeloxSpaceTabPreviewBubble>(
++        anchor_view, browser, space_index);
++    views::Widget* widget =
++        views::BubbleDialogDelegateView::CreateBubble(std::move(bubble));
++    st.active_preview_bubble_widget = widget;
++    st.active_preview_space = space_index;
++    widget->Show();
++  }
++
++  static void ClosePreview() {
++    auto& st = GetVeloxState();
++    if (st.active_preview_bubble_widget) {
++      st.active_preview_bubble_widget->Close();
++      st.active_preview_bubble_widget = nullptr;
++      st.active_preview_space = -1;
++    }
++  }
++
++  VeloxSpaceTabPreviewBubble(views::View* anchor_view,
++                             Browser* browser,
++                             int space_index)
++      : BubbleDialogDelegateView(anchor_view, views::BubbleBorder::TOP_LEFT),
++        browser_(browser),
++        space_index_(space_index) {
++    SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
++    set_margins(gfx::Insets::VH(10, 12));
++    set_color(SkColorSetRGB(15, 20, 30));
++    SetCanActivate(false);
++    set_highlight_button_when_shown(false);
++    SetTitle(u"Velox Space Preview");
++    SetShowTitle(false);
++    SetShowCloseButton(false);
++    set_shadow(views::BubbleBorder::STANDARD_SHADOW);
++  }
++
++  ~VeloxSpaceTabPreviewBubble() override {
++    if (GetVeloxState().active_preview_bubble_widget == GetWidget()) {
++      GetVeloxState().active_preview_bubble_widget = nullptr;
++      GetVeloxState().active_preview_space = -1;
++    }
++  }
++
++  void Init() override {
++    auto* layout = SetLayoutManager(std::make_unique<views::BoxLayout>(
++        views::BoxLayout::Orientation::kVertical, gfx::Insets(), 6));
++    layout->set_cross_axis_alignment(
++        views::BoxLayout::CrossAxisAlignment::kStretch);
++
++    struct TabInfo {
++      int model_idx;
++      std::u16string title;
++      GURL url;
++      ui::ImageModel favicon;
++      bool is_active;
++      bool is_audio;
++    };
++    std::vector<TabInfo> space_tabs;
++
++    BrowserView* bv =
++        browser_ ? BrowserView::GetBrowserViewForBrowser(browser_) : nullptr;
++    TabStrip* tab_strip = bv ? bv->tabstrip() : nullptr;
++    if (tab_strip && browser_->tab_strip_model()) {
++      for (int i = 0; i < tab_strip->GetTabCount(); ++i) {
++        Tab* t = velox::SafeGetTab(tab_strip, i);
++        if (!t || t->closing()) {
++          continue;
++        }
++        if (velox::GetTabWorkspace(t) == space_index_) {
++          bool audio = false;
++          for (TabAlertState alert : t->data().alert_state) {
++            if (alert == TabAlertState::AUDIO_PLAYING) {
++              audio = true;
++              break;
++            }
++          }
++          space_tabs.push_back({
++              i,
++              t->data().title,
++              t->data().visible_url,
++              t->data().favicon,
++              t->IsActive(),
++              audio,
++          });
++        }
++      }
++    }
++
++    const int cur_ws =
++        tab_strip ? velox::GetTabStripActiveWorkspace(tab_strip) : 0;
++    const bool is_current_space = (cur_ws == space_index_);
++
++    // 1. Header Row
++    auto* header = AddChildView(std::make_unique<views::View>());
++    auto* h_layout =
++        header->SetLayoutManager(std::make_unique<views::BoxLayout>(
++            views::BoxLayout::Orientation::kHorizontal, gfx::Insets::VH(0, 2), 6));
++    h_layout->set_cross_axis_alignment(
++        views::BoxLayout::CrossAxisAlignment::kCenter);
++
++    std::u16string space_title =
++        base::NumberToString16(space_index_ + 1) + u" " +
++        velox::GetSpaceName(space_index_);
++    auto* space_lbl = header->AddChildView(std::make_unique<views::Label>(
++        space_title, views::style::CONTEXT_DIALOG_TITLE,
++        views::style::STYLE_PRIMARY));
++    space_lbl->SetHorizontalAlignment(gfx::ALIGN_LEFT);
++    space_lbl->SetEnabledColor(SkColorSetRGB(241, 245, 249));
++    space_lbl->SetFontList(space_lbl->font_list().Derive(
++        1, gfx::Font::NORMAL, gfx::Font::Weight::BOLD));
++    h_layout->SetFlexForView(space_lbl, 1);
++
++    if (is_current_space) {
++      auto* active_pill = header->AddChildView(std::make_unique<views::Label>(
++          u"Active", views::style::CONTEXT_LABEL, views::style::STYLE_SECONDARY));
++      active_pill->SetEnabledColor(SkColorSetRGB(96, 165, 250));
++      active_pill->SetFontList(active_pill->font_list().Derive(
++          -2, gfx::Font::NORMAL, gfx::Font::Weight::BOLD));
++    }
++
++    std::u16string count_text = base::NumberToString16(space_tabs.size()) +
++                                (space_tabs.size() == 1 ? u" tab" : u" tabs");
++    auto* count_lbl = header->AddChildView(std::make_unique<views::Label>(
++        count_text, views::style::CONTEXT_LABEL,
++        views::style::STYLE_SECONDARY));
++    count_lbl->SetEnabledColor(SkColorSetRGB(148, 163, 184));
++    count_lbl->SetFontList(count_lbl->font_list().Derive(
++        -2, gfx::Font::NORMAL, gfx::Font::Weight::SEMIBOLD));
++
++    // Hairline divider
++    auto* divider = AddChildView(std::make_unique<views::View>());
++    divider->SetPreferredSize(gfx::Size(270, 1));
++    divider->SetBackground(
++        views::CreateSolidBackground(SkColorSetARGB(35, 255, 255, 255)));
++
++    // Tab Rows or Empty State
++    if (space_tabs.empty()) {
++      auto* empty_box = AddChildView(std::make_unique<views::View>());
++      auto* e_layout =
++          empty_box->SetLayoutManager(std::make_unique<views::BoxLayout>(
++              views::BoxLayout::Orientation::kVertical, gfx::Insets::VH(10, 4),
++              3));
++      e_layout->set_cross_axis_alignment(
++          views::BoxLayout::CrossAxisAlignment::kCenter);
++
++      auto* empty_msg = empty_box->AddChildView(std::make_unique<views::Label>(
++          u"No tabs in this space", views::style::CONTEXT_LABEL,
++          views::style::STYLE_PRIMARY));
++      empty_msg->SetEnabledColor(SkColorSetRGB(203, 213, 225));
++      empty_msg->SetFontList(empty_msg->font_list().Derive(
++          -1, gfx::Font::NORMAL, gfx::Font::Weight::SEMIBOLD));
++
++      auto* empty_sub = empty_box->AddChildView(std::make_unique<views::Label>(
++          u"Click to switch or move tabs here via right-click",
++          views::style::CONTEXT_LABEL, views::style::STYLE_SECONDARY));
++      empty_sub->SetEnabledColor(SkColorSetRGB(100, 116, 139));
++      empty_sub->SetFontList(empty_sub->font_list().Derive(
++          -2, gfx::Font::NORMAL, gfx::Font::Weight::NORMAL));
++    } else {
++      const size_t max_show = 7;
++      for (size_t i = 0; i < std::min(space_tabs.size(), max_show); ++i) {
++        const auto& t = space_tabs[i];
++        AddChildView(std::make_unique<VeloxSpaceTabRowView>(
++            browser_, space_index_, t.model_idx, t.title, t.url, t.favicon,
++            t.is_active, t.is_audio,
++            base::BindRepeating(&VeloxSpaceTabPreviewBubble::ClosePreview)));
++      }
++      if (space_tabs.size() > max_show) {
++        auto* more_lbl = AddChildView(std::make_unique<views::Label>(
++            u"+ " + base::NumberToString16(space_tabs.size() - max_show) +
++                u" more tabs",
++            views::style::CONTEXT_LABEL, views::style::STYLE_SECONDARY));
++        more_lbl->SetHorizontalAlignment(gfx::ALIGN_CENTER);
++        more_lbl->SetEnabledColor(SkColorSetRGB(148, 163, 184));
++        more_lbl->SetFontList(more_lbl->font_list().Derive(
++            -2, gfx::Font::ITALIC, gfx::Font::Weight::NORMAL));
++      }
++    }
++  }
++
++ private:
++  raw_ptr<Browser> browser_ = nullptr;
++  int space_index_ = 0;
++};
++
++BEGIN_METADATA(VeloxSpaceTabPreviewBubble)
++END_METADATA
++
++// ============================================================================
++// VeloxSpacesControl: Morphing Spaces Pill with Tab Hover Previews
++// ============================================================================
++class VeloxSpacesControl : public views::View,
++                           public views::AnimationDelegateViews,
++                           public ui::SimpleMenuModel::Delegate {
++  METADATA_HEADER(VeloxSpacesControl, views::View)
++
++ public:
++  enum ContextCommand {
++    kCommandRename = 1,
++    kCommandMoveTab,
++    kCommandSwitch,
++    kCommandNewSpace,
++    kCommandDeleteSpace,
++    kCommandResetName,
++  };
++
++  explicit VeloxSpacesControl(Browser* browser)
++      : views::AnimationDelegateViews(this),
++        browser_(browser),
++        morph_animation_(this) {
++    if (browser_ && browser_->profile()) {
++      velox::LoadSpaceNames(browser_->profile());
++    }
++    morph_animation_.SetSlideDuration(base::Milliseconds(220));
++    morph_animation_.SetTweenType(gfx::Tween::FAST_OUT_SLOW_IN);
++
++    UpdateTooltip();
++    GetViewAccessibility().SetName(u"Velox Workspaces");
++    GetVeloxState().spaces_controls.insert(this);
++  }
++
++  ~VeloxSpacesControl() override {
++    VeloxSpaceTabPreviewBubble::ClosePreview();
++    GetVeloxState().spaces_controls.erase(this);
++  }
++
++  void UpdateTooltip() {
++    std::u16string tip =
++        u"Velox Spaces: Click to expand • Double-click or Right-click to rename • Click + to add space\n";
++    int count = velox::GetSpaceCount();
++    for (int i = 0; i < count; ++i) {
++      tip += u"[" + base::NumberToString16(i + 1) + u"] " + velox::GetSpaceName(i);
++      if (i < count - 1) {
++        tip += u"  •  ";
++      }
++    }
++    SetTooltipText(tip);
++  }
++
++  void NotifyUpdated() {
++    UpdateTooltip();
++    PreferredSizeChanged();
++    SchedulePaint();
++  }
++
++  int GetActiveSpace() const {
++    if (!browser_) {
++      return 0;
++    }
++    BrowserView* bv = BrowserView::GetBrowserViewForBrowser(browser_);
++    if (!bv || !bv->tabstrip()) {
++      return 0;
++    }
++    return velox::GetTabStripActiveWorkspace(bv->tabstrip());
++  }
++
++  int GetSegmentWidth(int i, int active) const {
++    if (i == active) {
++      const gfx::FontList bold_font = gfx::FontList().Derive(
++          0, gfx::Font::NORMAL, gfx::Font::Weight::BOLD);
++      std::u16string label = base::NumberToString16(i + 1) + u" " +
++                             velox::GetSpaceName(i);
++      int text_w = gfx::Canvas::GetStringWidth(label, bold_font);
++      return std::clamp(text_w + 16, 56, 120);
++    }
++    const gfx::FontList semi_font = gfx::FontList().Derive(
++        0, gfx::Font::NORMAL, gfx::Font::Weight::SEMIBOLD);
++    std::u16string label = base::NumberToString16(i + 1);
++    int text_w = gfx::Canvas::GetStringWidth(label, semi_font);
++    return std::clamp(text_w + 12, 26, 36);
++  }
++
++  int GetCollapsedWidth() const {
++    const int active = GetActiveSpace();
++    const gfx::FontList bold_font = gfx::FontList().Derive(
++        0, gfx::Font::NORMAL, gfx::Font::Weight::BOLD);
++    std::u16string label = base::NumberToString16(active + 1) + u" " +
++                           velox::GetSpaceName(active) + u"  ▾";
++    int text_w = gfx::Canvas::GetStringWidth(label, bold_font);
++    return std::clamp(text_w + 20, 70, 130);
++  }
++
++  int GetExpandedWidth() const {
++    const int active = GetActiveSpace();
++    const int count = velox::GetSpaceCount();
++    int total_w = 6;
++    for (int i = 0; i < count; ++i) {
++      total_w += GetSegmentWidth(i, active) + 2;
++    }
++    if (count < 9) {
++      total_w += 22;  // '+' button
++    }
++    total_w += 22;  // '◂' button
++    return total_w;
++  }
++
++  gfx::Size CalculatePreferredSize(
++      const views::SizeBounds& available_size) const override {
++    int col_w = GetCollapsedWidth();
++    int exp_w = GetExpandedWidth();
++    double progress = morph_animation_.GetCurrentValue();
++    int current_w = gfx::Tween::IntValueBetween(progress, col_w, exp_w);
++    return gfx::Size(current_w, 28);
++  }
++
++  void AnimationProgressed(const gfx::Animation* animation) override {
++    PreferredSizeChanged();
++    SchedulePaint();
++  }
++
++  void AnimationEnded(const gfx::Animation* animation) override {
++    PreferredSizeChanged();
++    SchedulePaint();
++  }
++
++  void Expand() {
++    if (is_expanded_) {
++      return;
++    }
++    is_expanded_ = true;
++    auto_collapse_timer_.Stop();
++    morph_animation_.Show();
++  }
++
++  void Collapse() {
++    if (!is_expanded_) {
++      return;
++    }
++    is_expanded_ = false;
++    auto_collapse_timer_.Stop();
++    VeloxSpaceTabPreviewBubble::ClosePreview();
++    morph_animation_.Hide();
++  }
++
++  // Returns:
++  // 0 .. count-1 for space segments
++  // -3 for '+' new space button
++  // -2 for '◂' collapse button
++  // -1 for out of bounds
++  int HitSpaceIndex(int x) const {
++    if (!is_expanded_ && !morph_animation_.is_animating()) {
++      return GetActiveSpace();
++    }
++    const int active = GetActiveSpace();
++    const int count = velox::GetSpaceCount();
++    int cur_x = 3;
++    for (int i = 0; i < count; ++i) {
++      int seg_w = GetSegmentWidth(i, active);
++      if (x >= cur_x && x < cur_x + seg_w) {
++        return i;
++      }
++      cur_x += seg_w + 2;
++    }
++    if (count < 9) {
++      if (x >= cur_x && x < cur_x + 22) {
++        return -3;  // '+' New Space button
++      }
++      cur_x += 24;
++    }
++    if (x >= cur_x) {
++      return -2;  // '◂' Collapse button
++    }
++    return -1;
++  }
++
++  bool OnMousePressed(const ui::MouseEvent& event) override {
++    int space_idx = HitSpaceIndex(event.x());
++
++    // Double-click opens rename dialog directly
++    if (event.flags() & ui::EF_IS_DOUBLE_CLICK) {
++      if (space_idx >= 0 && space_idx < velox::GetSpaceCount()) {
++        VeloxSpaceTabPreviewBubble::ClosePreview();
++        VeloxRenameSpaceBubble::Show(this, browser_, space_idx);
++        return true;
++      }
++    }
++
++    // Right-click opens context menu
++    if (event.IsOnlyRightMouseButton()) {
++      VeloxSpaceTabPreviewBubble::ClosePreview();
++      int target_idx = (space_idx >= 0 && space_idx < velox::GetSpaceCount())
++                           ? space_idx
++                           : GetActiveSpace();
++      ShowContextMenuForSpace(target_idx, event.location());
++      return true;
++    }
++
++    // Middle-click instantly moves current tab to this space
++    if (event.IsMiddleMouseButton()) {
++      if (space_idx >= 0 && space_idx < velox::GetSpaceCount()) {
++        velox::MoveActiveTabToWorkspace(browser_, space_idx);
++        return true;
++      }
++    }
++
++    // Left-click switches workspace, expands, adds space, or collapses
++    if (event.IsOnlyLeftMouseButton()) {
++      VeloxSpaceTabPreviewBubble::ClosePreview();
++      if (!is_expanded_ && !morph_animation_.is_animating()) {
++        Expand();
++        return true;
++      }
++
++      // In expanded mode:
++      if (space_idx == -2) {
++        // Collapse '◂'
++        Collapse();
++        return true;
++      }
++
++      if (space_idx == -3) {
++        // '+' New Space button!
++        int new_idx =
++            velox::CreateNewSpace(browser_ ? browser_->profile() : nullptr);
++        if (new_idx >= 0) {
++          velox::SwitchWorkspace(browser_, new_idx);
++          PreferredSizeChanged();
++          SchedulePaint();
++          VeloxRenameSpaceBubble::Show(this, browser_, new_idx);
++        }
++        return true;
++      }
++
++      if (space_idx >= 0 && space_idx < velox::GetSpaceCount()) {
++        if (space_idx == GetActiveSpace()) {
++          Collapse();
++        } else {
++          velox::SwitchWorkspace(browser_, space_idx);
++          Collapse();
++        }
++        return true;
++      }
++    }
++    return false;
++  }
++
++  void OnMouseMoved(const ui::MouseEvent& event) override {
++    int hit = HitSpaceIndex(event.x());
++    if (hit != hovered_space_) {
++      hovered_space_ = hit;
++      SchedulePaint();
++    }
++
++    if (hit >= 0 && hit < velox::GetSpaceCount()) {
++      hover_timer_.Stop();
++      hover_timer_.Start(
++          FROM_HERE, base::Milliseconds(140),
++          base::BindOnce(&VeloxSpacesControl::ShowHoverPreview,
++                         base::Unretained(this), hit));
++    } else {
++      hover_timer_.Stop();
++      preview_close_timer_.Start(
++          FROM_HERE, base::Milliseconds(200),
++          base::BindOnce(&VeloxSpacesControl::CheckDismissPreview,
++                         base::Unretained(this)));
++    }
++  }
++
++  void OnMouseExited(const ui::MouseEvent& event) override {
++    hover_timer_.Stop();
++    if (hovered_space_ != -1) {
++      hovered_space_ = -1;
++      SchedulePaint();
++    }
++
++    preview_close_timer_.Start(
++        FROM_HERE, base::Milliseconds(250),
++        base::BindOnce(&VeloxSpacesControl::CheckDismissPreview,
++                       base::Unretained(this)));
++
++    if (is_expanded_) {
++      auto_collapse_timer_.Start(
++          FROM_HERE, base::Milliseconds(3500),
++          base::BindOnce(&VeloxSpacesControl::Collapse,
++                         base::Unretained(this)));
++    }
++  }
++
++  void ShowHoverPreview(int space_idx) {
++    if (space_idx >= 0 && space_idx < velox::GetSpaceCount()) {
++      VeloxSpaceTabPreviewBubble::Show(this, browser_, space_idx);
++    }
++  }
++
++  void CheckDismissPreview() {
++    auto& st = GetVeloxState();
++    if (!st.active_preview_bubble_widget) {
++      return;
++    }
++    gfx::Point cursor = display::Screen::GetScreen()->GetCursorScreenPoint();
++    gfx::Rect my_bounds = GetBoundsInScreen();
++    if (my_bounds.Contains(cursor)) {
++      return;
++    }
++    gfx::Rect bubble_bounds =
++        st.active_preview_bubble_widget->GetWindowBoundsInScreen();
++    if (bubble_bounds.Contains(cursor)) {
++      preview_close_timer_.Start(
++          FROM_HERE, base::Milliseconds(250),
++          base::BindOnce(&VeloxSpacesControl::CheckDismissPreview,
++                         base::Unretained(this)));
++      return;
++    }
++    VeloxSpaceTabPreviewBubble::ClosePreview();
++  }
++
++  void OnPaint(gfx::Canvas* canvas) override {
++    gfx::ScopedCanvas scoped(canvas);
++    const float scale = canvas->UndoDeviceScaleFactor();
++
++    gfx::RectF outer_f(GetLocalBounds());
++    outer_f.Scale(scale);
++    outer_f.Inset(gfx::InsetsF::VH(1.5f * scale, 2.0f * scale));
++
++    const float outer_radius = outer_f.height() / 2.0f;
++    SkRRect outer_rr;
++    outer_rr.setRectXY(gfx::RectFToSkRect(outer_f), outer_radius, outer_radius);
++
++    // Dark glass outer pill
++    cc::PaintFlags outer_bg;
++    outer_bg.setAntiAlias(true);
++    outer_bg.setStyle(cc::PaintFlags::kFill_Style);
++    outer_bg.setColor(SkColorSetARGB(195, 11, 15, 25));
++    canvas->sk_canvas()->drawRRect(outer_rr, outer_bg);
++
++    cc::PaintFlags outer_border;
++    outer_border.setAntiAlias(true);
++    outer_border.setStyle(cc::PaintFlags::kStroke_Style);
++    outer_border.setStrokeWidth(1.0f * scale);
++    outer_border.setColor(SkColorSetARGB(35, 255, 255, 255));
++    canvas->sk_canvas()->drawRRect(outer_rr, outer_border);
++
++    canvas->sk_canvas()->restore();  // Back to DIPs
++
++    const int active = GetActiveSpace();
++    const int count = velox::GetSpaceCount();
++    const double progress = morph_animation_.GetCurrentValue();
++
++    // 1. COLLAPSED VIEW (when progress is close to 0)
++    if (!is_expanded_ && progress <= 0.05) {
++      gfx::Rect seg_rect(3, 3, width() - 6, height() - 6);
++
++      gfx::ScopedCanvas seg_scoped(canvas);
++      const float s = canvas->UndoDeviceScaleFactor();
++      gfx::RectF sf(seg_rect);
++      sf.Scale(s);
++      SkRRect srr;
++      srr.setRectXY(gfx::RectFToSkRect(sf), sf.height() / 2.0f, sf.height() / 2.0f);
++
++      cc::PaintFlags seg_fill;
++      seg_fill.setAntiAlias(true);
++      seg_fill.setStyle(cc::PaintFlags::kFill_Style);
++      seg_fill.setColor(hovered_space_ != -1 ? SkColorSetARGB(75, 59, 130, 246)
++                                             : SkColorSetARGB(50, 59, 130, 246));
++      canvas->sk_canvas()->drawRRect(srr, seg_fill);
++
++      cc::PaintFlags seg_rim;
++      seg_rim.setAntiAlias(true);
++      seg_rim.setStyle(cc::PaintFlags::kStroke_Style);
++      seg_rim.setStrokeWidth(1.2f * s);
++      seg_rim.setColor(SkColorSetARGB(180, 59, 130, 246));
++      canvas->sk_canvas()->drawRRect(srr, seg_rim);
++
++      canvas->sk_canvas()->restore();
++
++      std::u16string label = base::NumberToString16(active + 1) + u" " +
++                             velox::GetSpaceName(active) + u"  ▾";
++      canvas->DrawStringRectWithFlags(
++          label,
++          gfx::FontList().Derive(0, gfx::Font::NORMAL, gfx::Font::Weight::BOLD),
++          SK_ColorWHITE, seg_rect,
++          gfx::Canvas::TEXT_ALIGN_CENTER | gfx::Canvas::NO_SUBPIXEL_RENDERING);
++      return;
++    }
++
++    // 2. EXPANDED OR MORPHING VIEW
++    int cur_x = 3;
++    for (int i = 0; i < count; ++i) {
++      int seg_w = GetSegmentWidth(i, active);
++      if (cur_x + seg_w > width() - 2) {
++        break;
++      }
++      gfx::Rect seg_rect(cur_x, 3, seg_w, height() - 6);
++
++      if (i == active || i == hovered_space_) {
++        gfx::ScopedCanvas seg_scoped(canvas);
++        const float s = canvas->UndoDeviceScaleFactor();
++        gfx::RectF sf(seg_rect);
++        sf.Scale(s);
++        SkRRect srr;
++        srr.setRectXY(gfx::RectFToSkRect(sf), sf.height() / 2.0f, sf.height() / 2.0f);
++
++        cc::PaintFlags seg_fill;
++        seg_fill.setAntiAlias(true);
++        seg_fill.setStyle(cc::PaintFlags::kFill_Style);
++        if (i == active) {
++          seg_fill.setColor(SkColorSetARGB(55, 59, 130, 246));
++        } else {
++          seg_fill.setColor(SkColorSetARGB(30, 255, 255, 255));
++        }
++        canvas->sk_canvas()->drawRRect(srr, seg_fill);
++
++        if (i == active) {
++          cc::PaintFlags seg_rim;
++          seg_rim.setAntiAlias(true);
++          seg_rim.setStyle(cc::PaintFlags::kStroke_Style);
++          seg_rim.setStrokeWidth(1.2f * s);
++          seg_rim.setColor(SkColorSetARGB(180, 59, 130, 246));
++          canvas->sk_canvas()->drawRRect(srr, seg_rim);
++        }
++      }
++
++      SkColor text_col = (i == active)
++                             ? SK_ColorWHITE
++                             : (i == hovered_space_
++                                    ? SkColorSetRGB(226, 232, 240)
++                                    : SkColorSetRGB(148, 163, 184));
++      std::u16string label =
++          (i == active)
++              ? (base::NumberToString16(i + 1) + u" " + velox::GetSpaceName(i))
++              : base::NumberToString16(i + 1);
++      canvas->DrawStringRectWithFlags(
++          label,
++          gfx::FontList().Derive(
++              0, gfx::Font::NORMAL,
++              (i == active) ? gfx::Font::Weight::BOLD
++                            : gfx::Font::Weight::SEMIBOLD),
++          text_col, seg_rect,
++          gfx::Canvas::TEXT_ALIGN_CENTER | gfx::Canvas::NO_SUBPIXEL_RENDERING);
++
++      cur_x += seg_w + 2;
++    }
++
++    // '+' New Space button
++    if (cur_x < width() - 26 && count < 9) {
++      gfx::Rect add_rect(cur_x, 3, 20, height() - 6);
++      if (hovered_space_ == -3) {
++        gfx::ScopedCanvas add_scoped(canvas);
++        const float s = canvas->UndoDeviceScaleFactor();
++        gfx::RectF af(add_rect);
++        af.Scale(s);
++        SkRRect arr;
++        arr.setRectXY(gfx::RectFToSkRect(af), af.height() / 2.0f, af.height() / 2.0f);
++        cc::PaintFlags add_fill;
++        add_fill.setAntiAlias(true);
++        add_fill.setColor(SkColorSetARGB(45, 59, 130, 246));
++        canvas->sk_canvas()->drawRRect(arr, add_fill);
++      }
++      canvas->DrawStringRectWithFlags(
++          u"+",
++          gfx::FontList().Derive(0, gfx::Font::NORMAL, gfx::Font::Weight::BOLD),
++          (hovered_space_ == -3) ? SK_ColorWHITE : SkColorSetRGB(148, 163, 184),
++          add_rect,
++          gfx::Canvas::TEXT_ALIGN_CENTER | gfx::Canvas::NO_SUBPIXEL_RENDERING);
++      cur_x += 22;
++    }
++
++    // Collapse chevron '◂' at the end
++    if (cur_x < width() - 8) {
++      gfx::Rect collapse_rect(cur_x, 3, width() - cur_x - 3, height() - 6);
++      if (hovered_space_ == -2) {
++        gfx::ScopedCanvas col_scoped(canvas);
++        const float s = canvas->UndoDeviceScaleFactor();
++        gfx::RectF cf(collapse_rect);
++        cf.Scale(s);
++        SkRRect crr;
++        crr.setRectXY(gfx::RectFToSkRect(cf), cf.height() / 2.0f, cf.height() / 2.0f);
++        cc::PaintFlags col_fill;
++        col_fill.setAntiAlias(true);
++        col_fill.setColor(SkColorSetARGB(35, 255, 255, 255));
++        canvas->sk_canvas()->drawRRect(crr, col_fill);
++      }
++      canvas->DrawStringRectWithFlags(
++          u"◂",
++          gfx::FontList().Derive(0, gfx::Font::NORMAL, gfx::Font::Weight::BOLD),
++          (hovered_space_ == -2) ? SK_ColorWHITE : SkColorSetRGB(148, 163, 184),
++          collapse_rect,
++          gfx::Canvas::TEXT_ALIGN_CENTER | gfx::Canvas::NO_SUBPIXEL_RENDERING);
++    }
++  }
++
++  // ui::SimpleMenuModel::Delegate:
++  void ExecuteCommand(int command_id, int event_flags) override {
++    switch (command_id) {
++      case kCommandRename:
++        VeloxRenameSpaceBubble::Show(this, browser_, context_space_idx_);
++        break;
++      case kCommandMoveTab:
++        velox::MoveActiveTabToWorkspace(browser_, context_space_idx_);
++        break;
++      case kCommandSwitch:
++        velox::SwitchWorkspace(browser_, context_space_idx_);
++        break;
++      case kCommandNewSpace: {
++        int new_idx =
++            velox::CreateNewSpace(browser_ ? browser_->profile() : nullptr);
++        if (new_idx >= 0) {
++          velox::SwitchWorkspace(browser_, new_idx);
++          PreferredSizeChanged();
++          SchedulePaint();
++          VeloxRenameSpaceBubble::Show(this, browser_, new_idx);
++        }
++        break;
++      }
++      case kCommandDeleteSpace: {
++        velox::DeleteSpace(context_space_idx_, browser_);
++        PreferredSizeChanged();
++        SchedulePaint();
++        break;
++      }
++      case kCommandResetName: {
++        const std::u16string kDefaults[3] = {u"General", u"Work", u"Focus"};
++        std::u16string def_name =
++            (context_space_idx_ < 3)
++                ? kDefaults[context_space_idx_]
++                : (u"Space " + base::NumberToString16(context_space_idx_ + 1));
++        velox::SetSpaceName(context_space_idx_, def_name,
++                            browser_ ? browser_->profile() : nullptr);
++        break;
++      }
++    }
++  }
++
++ private:
++  void ShowContextMenuForSpace(int space_idx, const gfx::Point& local_point) {
++    context_space_idx_ = space_idx;
++    menu_model_ = std::make_unique<ui::SimpleMenuModel>(this);
++    std::u16string name = velox::GetSpaceName(space_idx);
++
++    menu_model_->AddItem(kCommandRename,
++                         u"Rename \"" + name + u"\" Space...");
++    menu_model_->AddItem(kCommandMoveTab,
++                         u"Move Current Tab to this Space");
++    if (space_idx != GetActiveSpace()) {
++      menu_model_->AddItem(kCommandSwitch, u"Switch to this Space");
++    }
++    menu_model_->AddSeparator(ui::MenuSeparatorType::NORMAL_SEPARATOR);
++    if (velox::GetSpaceCount() < 9) {
++      menu_model_->AddItem(kCommandNewSpace, u"Create New Space...");
++    }
++    if (velox::GetSpaceCount() > 1) {
++      menu_model_->AddItem(kCommandDeleteSpace,
++                           u"Delete \"" + name + u"\" Space");
++    }
++    menu_model_->AddSeparator(ui::MenuSeparatorType::NORMAL_SEPARATOR);
++    menu_model_->AddItem(kCommandResetName, u"Reset Name to Default");
++
++    menu_runner_ = std::make_unique<views::MenuRunner>(
++        menu_model_.get(),
++        views::MenuRunner::HAS_MNEMONICS | views::MenuRunner::CONTEXT_MENU);
++
++    gfx::Point screen_loc = local_point;
++    views::View::ConvertPointToScreen(this, &screen_loc);
++    menu_runner_->RunMenuAt(
++        GetWidget(), nullptr, gfx::Rect(screen_loc, gfx::Size()),
++        views::MenuAnchorPosition::kTopLeft, ui::mojom::MenuSourceType::kMouse);
++  }
++
++  raw_ptr<Browser> browser_ = nullptr;
++  int hovered_space_ = -1;
++  int context_space_idx_ = 0;
++  bool is_expanded_ = false;
++
++  gfx::SlideAnimation morph_animation_;
++  base::OneShotTimer hover_timer_;
++  base::OneShotTimer preview_close_timer_;
++  base::OneShotTimer auto_collapse_timer_;
++
++  std::unique_ptr<ui::SimpleMenuModel> menu_model_;
++  std::unique_ptr<views::MenuRunner> menu_runner_;
++};
++
++BEGIN_METADATA(VeloxSpacesControl)
++END_METADATA
++
++void NotifyVeloxSpacesControls() {
++  for (VeloxSpacesControl* ctrl : GetVeloxState().spaces_controls) {
++    if (ctrl) {
++      ctrl->NotifyUpdated();
++    }
++  }
++}
++
+ class ToolbarView::ContainerView : public views::View {
+   METADATA_HEADER(ContainerView, views::View)
+ 
+@@ -255,6 +3338,7 @@ ToolbarView::~ToolbarView() {
+   }
+ 
+   overflow_button_->set_toolbar_controller(nullptr);
++  velox_update_button_ = nullptr;
+ 
+   for (const auto& view_and_command : GetViewCommandMap()) {
+     chrome::RemoveCommandObserver(browser_, view_and_command.second, this);
+@@ -399,6 +3483,10 @@ void ToolbarView::Init() {
+   reload_ = container_view_->AddChildView(std::move(reload));
+   home_ = container_view_->AddChildView(std::move(home));
+ 
++  if (browser_ && browser_->is_type_normal()) {
++    container_view_->AddChildView(std::make_unique<VeloxSpacesControl>(browser_));
++  }
++
+   location_bar_ = container_view_->AddChildView(std::move(location_bar));
+ 
+   if (extensions_container) {
+@@ -513,6 +3601,12 @@ void ToolbarView::Init() {
+   new_tab_button_ = container_view_->AddChildView(std::move(new_tab_button));
+ #endif  // BUILDFLAG(ENABLE_WEBUI_TAB_STRIP)
+ 
++  auto velox_update_button =
++      std::make_unique<VeloxUpdateButton>(this, browser_);
++  velox_update_button_ =
++      container_view_->AddChildView(std::move(velox_update_button));
++  velox_update_button_->UpdateVisibility();
++
+   overflow_button_ =
+       container_view_->AddChildView(std::make_unique<OverflowButton>());
+   overflow_button_->SetVisible(false);
+@@ -1117,6 +4211,15 @@ void ToolbarView::UpdateTypeAndSeverity(
+   }
+   app_menu_button_->GetViewAccessibility().SetName(accname_app);
+   app_menu_button_->SetTypeAndSeverity(type_and_severity);
++
++  if (velox_update_button_) {
++    if (type_and_severity.type ==
++        AppMenuIconController::IconType::UPGRADE_NOTIFICATION) {
++      velox_update_button_->SetVisible(true);
++    } else {
++      velox_update_button_->UpdateVisibility();
++    }
++  }
+ }
+ 
+ ExtensionsToolbarContainer* ToolbarView::GetExtensionsToolbarContainer() {
+diff --git a/chrome/browser/upgrade_detector/get_installed_version_linux.cc b/chrome/browser/upgrade_detector/get_installed_version_linux.cc
+index 90216e4212..af14641a61 100644
+--- a/chrome/browser/upgrade_detector/get_installed_version_linux.cc
++++ b/chrome/browser/upgrade_detector/get_installed_version_linux.cc
+@@ -4,25 +4,123 @@
+ 
+ #include "chrome/browser/upgrade_detector/get_installed_version.h"
+ 
++#include <atomic>
++#include <optional>
+ #include <string>
+ #include <utility>
++#include <vector>
+ 
++#include "base/base64.h"
+ #include "base/command_line.h"
++#include "base/environment.h"
++#include "base/files/file_path.h"
++#include "base/files/file_util.h"
+ #include "base/functional/bind.h"
+ #include "base/functional/callback.h"
++#include "base/json/json_reader.h"
+ #include "base/location.h"
+ #include "base/logging.h"
++#include "base/no_destructor.h"
+ #include "base/process/launch.h"
++#include "base/process/process.h"
++#include "base/strings/string_number_conversions.h"
+ #include "base/strings/string_util.h"
++#include "base/synchronization/lock.h"
+ #include "base/task/task_traits.h"
+ #include "base/task/thread_pool.h"
++#include "base/time/time.h"
++#include "base/values.h"
++#include "base/version.h"
+ #include "chrome/common/chrome_switches.h"
++#include "components/version_info/version_info.h"
++#include "crypto/signature_verifier.h"
+ 
+ namespace {
+ 
+-// On Linux, the Chrome binary may have been replaced by an update. Ask it to
+-// report its version.
++std::atomic<bool> g_velox_update_ready{false};
++std::atomic<bool> g_velox_update_installing{false};
++
++base::Lock& GetVeloxUpdateLock() {
++  static base::NoDestructor<base::Lock> lock;
++  return *lock;
++}
++
++base::Version& GetDetectedRemoteVersion() {
++  static base::NoDestructor<base::Version> version;
++  return *version;
++}
++
++constexpr char kVeloxManifestPublicKeyInfoHex[] =
++    "30820122300D06092A864886F70D01010105000382010F003082010A0282010100"
++    "BFDECD01714BCF685AB0381DCE1840091AE65D6977E1A8328E0B7FF4FDC0D4958"
++    "4302E9182816E52B448112295FD002ED8D19D3BC7424B6CB41E7BBB6430703C82"
++    "9DEA18563B2C19326505E2FA718ABE0994F17C5FB634590E5490E7D64373421CEE6"
++    "AAD661B31F4DD565A01FBD50FF431C193C95895EFCC0F73F7E4BF8932ED449AF77"
++    "A65E24EC9CBB2398F09501041898999F0773224740791DB7D2E7710E2216F692C5"
++    "04F8E4AC37705342AEE9E2918DBC83FFE95460F68B52F50A49D82E4A13EEC83D33"
++    "D4DCA17FE0FB488F51D5F0449880B34B29B7FA5F559A4C9C5ECC8DB58CB7B5D247"
++    "E8B0A78596CBF061C407BB557265480AF86FE3836CF3DA547850203010001";
++
++bool VerifyManifestSignature(const std::string& version,
++                             const std::string& download_url,
++                             const std::string& sha256,
++                             const std::string& signature) {
++  if (signature.empty() || signature.size() != 344) {
++    return false;
++  }
++
++  std::optional<std::vector<uint8_t>> signature_bytes =
++      base::Base64Decode(signature);
++  std::vector<uint8_t> public_key_info;
++  if (!signature_bytes || signature_bytes->size() != 256 ||
++      !base::HexStringToBytes(kVeloxManifestPublicKeyInfoHex,
++                              &public_key_info)) {
++    return false;
++  }
++
++  const std::string auth_payload = version + "|" + download_url + "|" + sha256;
++  crypto::SignatureVerifier verifier;
++  if (!verifier.VerifyInit(crypto::SignatureVerifier::RSA_PKCS1_SHA256,
++                           *signature_bytes, public_key_info)) {
++    return false;
++  }
++  verifier.VerifyUpdate(base::span<const uint8_t>(
++      reinterpret_cast<const uint8_t*>(auth_payload.data()),
++      auth_payload.size()));
++  return verifier.VerifyFinal();
++}
++
++void DownloadAndApplyLinuxUpdate() {
++  base::CommandLine cmd(base::FilePath("/bin/bash"));
++  cmd.AppendArg("-c");
++  cmd.AppendArg(
++      "curl -fsSL https://raw.githubusercontent.com/okinamo-o/Velox/main/scripts/velox-linux.sh | bash -s -- --update");
++  base::LaunchOptions options;
++  base::Process process = base::LaunchProcess(cmd, options);
++  if (process.IsValid()) {
++    int exit_code = -1;
++    if (process.WaitForExitWithTimeout(base::Minutes(10), &exit_code) &&
++        exit_code == 0) {
++      g_velox_update_ready.store(true);
++    }
++  }
++  g_velox_update_installing.store(false);
++}
++
++// On Linux, check both the local binary version and the remote GitHub release
++// manifest so the Velox Update button lights up whenever a new release is out.
+ InstalledAndCriticalVersion GetInstalledVersionSynchronous() {
++  const base::Version current_version = version_info::GetVersion();
++
++  {
++    base::AutoLock auto_lock(GetVeloxUpdateLock());
++    const base::Version& cached_remote = GetDetectedRemoteVersion();
++    if (cached_remote.IsValid() &&
++        cached_remote.CompareTo(current_version) > 0) {
++      return InstalledAndCriticalVersion(cached_remote, cached_remote);
++    }
++  }
++
+   base::CommandLine command_line(*base::CommandLine::ForCurrentProcess());
+   command_line.AppendSwitch(switches::kProductVersion);
+   base::Version installed_version;
+@@ -31,17 +129,80 @@ InstalledAndCriticalVersion GetInstalledVersionSynchronous() {
+     installed_version =
+         base::Version(base::TrimWhitespaceASCII(reply, base::TRIM_ALL));
+   }
+-  // Failure may be a result of invoking a Chrome that predates the introduction
+-  // of the --product-version switch in https://crrev.com/48795 (6.0.424.0).
+-  DLOG_IF(ERROR, !installed_version.IsValid())
+-      << "Failed to get current file version; child process replied with: "
+-      << reply;
++  if (installed_version.IsValid() &&
++      installed_version.CompareTo(current_version) > 0) {
++    return InstalledAndCriticalVersion(installed_version, installed_version);
++  }
+ 
+-  return InstalledAndCriticalVersion(std::move(installed_version));
++  // Query GitHub release manifest via curl
++  base::Time now = base::Time::Now();
++  std::string manifest_url =
++      "https://raw.githubusercontent.com/okinamo-o/Velox/main/dist/version.json?t=" +
++      base::NumberToString(now.ToTimeT());
++  base::CommandLine curl_cmd(base::FilePath("curl"));
++  curl_cmd.AppendArg("-fsSL");
++  curl_cmd.AppendArg(manifest_url);
++  std::string json_data;
++  if (base::GetAppOutput(curl_cmd, &json_data) && !json_data.empty()) {
++    auto parsed = base::JSONReader::Read(json_data);
++    if (parsed && parsed->is_dict()) {
++      const std::string* remote_ver_str =
++          parsed->GetDict().FindString("version");
++      if (remote_ver_str) {
++        base::Version remote_version(*remote_ver_str);
++        if (remote_version.IsValid() &&
++            remote_version.CompareTo(current_version) > 0) {
++          const base::Value::Dict* installer_dict =
++              parsed->GetDict().FindDict("installer");
++          const std::string* download_url =
++              installer_dict ? installer_dict->FindString("download_url")
++                             : nullptr;
++          const std::string* sha256_hash =
++              installer_dict ? installer_dict->FindString("sha256") : nullptr;
++          const std::string* sig_str =
++              parsed->GetDict().FindString("signature");
++          if (!sig_str && installer_dict) {
++            sig_str = installer_dict->FindString("signature");
++          }
++          if (download_url && sha256_hash && sig_str &&
++              VerifyManifestSignature(*remote_ver_str, *download_url,
++                                      *sha256_hash, *sig_str)) {
++            base::AutoLock auto_lock(GetVeloxUpdateLock());
++            GetDetectedRemoteVersion() = remote_version;
++            return InstalledAndCriticalVersion(remote_version, remote_version);
++          }
++        }
++      }
++    }
++  }
++
++  return InstalledAndCriticalVersion(current_version);
+ }
+ 
+ }  // namespace
+ 
++bool IsVeloxUpdateStaged() {
++  return g_velox_update_ready.load();
++}
++
++bool IsVeloxUpdateInstalling() {
++  return g_velox_update_installing.load();
++}
++
++void TriggerVeloxUpdateInstallIfNeeded() {
++  if (g_velox_update_ready.load()) {
++    return;
++  }
++  if (g_velox_update_installing.exchange(true)) {
++    return;
++  }
++  base::ThreadPool::PostTask(
++      FROM_HERE,
++      {base::TaskPriority::USER_VISIBLE,
++       base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN, base::MayBlock()},
++      base::BindOnce(&DownloadAndApplyLinuxUpdate));
++}
++
+ void GetInstalledVersion(InstalledVersionCallback callback) {
+   base::ThreadPool::PostTaskAndReplyWithResult(
+       FROM_HERE,
+diff --git a/chrome/browser/upgrade_detector/get_installed_version_win.cc b/chrome/browser/upgrade_detector/get_installed_version_win.cc
+index 73c041edd5..313c54a7c1 100644
+--- a/chrome/browser/upgrade_detector/get_installed_version_win.cc
++++ b/chrome/browser/upgrade_detector/get_installed_version_win.cc
+@@ -4,32 +4,609 @@
+ 
+ #include "chrome/browser/upgrade_detector/get_installed_version.h"
+ 
++#include <windows.h>
++#include <softpub.h>
++#include <wintrust.h>
++#include <atomic>
++#include <optional>
++#include <string>
+ #include <utility>
++#include <vector>
+ 
++#include "base/base_paths.h"
++#include "base/base64.h"
++#include "base/command_line.h"
++#include "base/files/file.h"
++#include "base/files/file_path.h"
++#include "base/files/file_util.h"
+ #include "base/functional/bind.h"
+ #include "base/functional/callback.h"
++#include "base/json/json_reader.h"
+ #include "base/location.h"
++#include "base/logging.h"
++#include "base/no_destructor.h"
++#include "base/path_service.h"
++#include "base/process/launch.h"
++#include "base/process/process.h"
++#include "base/strings/string_number_conversions.h"
++#include "base/strings/string_util.h"
++#include "base/strings/utf_string_conversions.h"
++#include "base/synchronization/lock.h"
+ #include "base/task/task_traits.h"
+ #include "base/task/thread_pool.h"
++#include "base/time/time.h"
++#include "base/values.h"
++#include "base/version.h"
++#include "base/win/registry.h"
+ #include "chrome/installer/util/install_util.h"
++#include "components/version_info/version_info.h"
++#include "crypto/signature_verifier.h"
++#include "crypto/secure_hash.h"
+ 
+ namespace {
+ 
++std::atomic<bool> g_velox_update_ready{false};
++std::atomic<bool> g_velox_update_installing{false};
++
++base::Lock& GetVeloxUpdateLock() {
++  static base::NoDestructor<base::Lock> lock;
++  return *lock;
++}
++
++base::Version& GetDetectedRemoteVersion() {
++  static base::NoDestructor<base::Version> version;
++  return *version;
++}
++
++std::string& GetDetectedDownloadUrl() {
++  static base::NoDestructor<std::string> url;
++  return *url;
++}
++
++std::string& GetDetectedSha256() {
++  static base::NoDestructor<std::string> sha;
++  return *sha;
++}
++
++bool IsValidSha256Hex(const std::string& hash) {
++  if (hash.size() != 64) {
++    return false;
++  }
++  for (char c : hash) {
++    if (!base::IsHexDigit(c)) {
++      return false;
++    }
++  }
++  return true;
++}
++
++bool IsTrustedDownloadUrl(const std::string& url) {
++  return base::StartsWith(url,
++                          "https://github.com/okinamo-o/Velox/releases/download/",
++                          base::CompareCase::INSENSITIVE_ASCII) ||
++         base::StartsWith(url, "https://github.com/okinamo-o/Velox/releases/",
++                          base::CompareCase::INSENSITIVE_ASCII);
++}
++
++bool VerifyFileSha256(const base::FilePath& file_path,
++                      const std::string& expected_sha256) {
++  if (!IsValidSha256Hex(expected_sha256)) {
++    LOG(ERROR) << "SECURITY ERROR: Missing or invalid 64-character SHA-256 hash.";
++    return false;
++  }
++
++  base::File file(file_path, base::File::FLAG_OPEN | base::File::FLAG_READ);
++  if (!file.IsValid()) {
++    LOG(ERROR) << "Failed to open downloaded file for SHA-256 verification: "
++               << file_path.value();
++    return false;
++  }
++
++  auto hasher = crypto::SecureHash::Create(crypto::SecureHash::SHA256);
++  std::vector<uint8_t> buffer(64 * 1024);
++  while (true) {
++    int bytes_read = file.ReadAtCurrentPos(
++        reinterpret_cast<char*>(buffer.data()), static_cast<int>(buffer.size()));
++    if (bytes_read < 0) {
++      LOG(ERROR) << "Error reading file during SHA-256 calculation.";
++      return false;
++    }
++    if (bytes_read == 0) {
++      break;
++    }
++    hasher->Update(buffer.data(), bytes_read);
++  }
++
++  std::vector<uint8_t> digest(32);
++  hasher->Finish(digest.data(), digest.size());
++  std::string actual_hex = base::HexEncode(digest.data(), digest.size());
++
++  bool matches = base::EqualsCaseInsensitiveASCII(actual_hex, expected_sha256);
++  if (!matches) {
++    LOG(ERROR) << "SECURITY ERROR: SHA-256 hash mismatch! Expected: "
++               << expected_sha256 << ", Actual: " << actual_hex;
++  }
++  return matches;
++}
++
++// DER SubjectPublicKeyInfo for the RSA-2048 Velox release-manifest signing
++// key. The corresponding private key must remain in the release operator's
++// Windows certificate store and must never be included in the source tree.
++constexpr char kVeloxManifestPublicKeyInfoHex[] =
++    "30820122300D06092A864886F70D01010105000382010F003082010A0282010100"
++    "BFDECD01714BCF685AB0381DCE1840091AE65D6977E1A8328E0B7FF4FDC0D4958"
++    "4302E9182816E52B448112295FD002ED8D19D3BC7424B6CB41E7BBB6430703C82"
++    "9DEA18563B2C19326505E2FA718ABE0994F17C5FB634590E5490E7D64373421CEE6"
++    "AAD661B31F4DD565A01FBD50FF431C193C95895EFCC0F73F7E4BF8932ED449AF77"
++    "A65E24EC9CBB2398F09501041898999F0773224740791DB7D2E7710E2216F692C5"
++    "04F8E4AC37705342AEE9E2918DBC83FFE95460F68B52F50A49D82E4A13EEC83D33"
++    "D4DCA17FE0FB488F51D5F0449880B34B29B7FA5F559A4C9C5ECC8DB58CB7B5D247"
++    "E8B0A78596CBF061C407BB557265480AF86FE3836CF3DA547850203010001";
++
++bool VerifyManifestSignature(const std::string& version,
++                             const std::string& download_url,
++                             const std::string& sha256,
++                             const std::string& signature) {
++  if (signature.empty() || signature.size() != 344) {
++    LOG(ERROR)
++        << "SECURITY ERROR: Missing or invalid Base64 RSA-2048 manifest signature.";
++    return false;
++  }
++
++  std::optional<std::vector<uint8_t>> signature_bytes =
++      base::Base64Decode(signature);
++  std::vector<uint8_t> public_key_info;
++  if (!signature_bytes || signature_bytes->size() != 256 ||
++      !base::HexStringToBytes(kVeloxManifestPublicKeyInfoHex,
++                              &public_key_info)) {
++    LOG(ERROR) << "SECURITY ERROR: Manifest signature encoding is invalid.";
++    return false;
++  }
++
++  const std::string auth_payload = version + "|" + download_url + "|" + sha256;
++  crypto::SignatureVerifier verifier;
++  if (!verifier.VerifyInit(crypto::SignatureVerifier::RSA_PKCS1_SHA256,
++                           *signature_bytes, public_key_info)) {
++    LOG(ERROR) << "SECURITY ERROR: Manifest signature initialization failed.";
++    return false;
++  }
++  verifier.VerifyUpdate(base::span<const uint8_t>(
++      reinterpret_cast<const uint8_t*>(auth_payload.data()),
++      auth_payload.size()));
++  if (!verifier.VerifyFinal()) {
++    LOG(ERROR) << "SECURITY ERROR: Manifest authentication signature mismatch.";
++    return false;
++  }
++  return true;
++}
++
++typedef LONG(WINAPI* WinVerifyTrustFn)(HWND, GUID*, LPVOID);
++
++bool IsRunningUnderWine() {
++  HMODULE ntdll = ::GetModuleHandleW(L"ntdll.dll");
++  return ntdll && ::GetProcAddress(ntdll, "wine_get_version") != nullptr;
++}
++
++bool VerifyAuthenticodeSignature(const base::FilePath& file_path) {
++  if (IsRunningUnderWine()) {
++    // Under Wine on Linux (e.g. Zorin OS), wintrust.dll lacks the Windows root
++    // store and returns TRUST_E_PROVIDER_UNKNOWN. The package has already been
++    // cryptographically verified via RSA-2048 manifest signature + SHA-256.
++    return true;
++  }
++
++  HMODULE wintrust = ::LoadLibraryW(L"wintrust.dll");
++  if (!wintrust) {
++    LOG(ERROR) << "SECURITY ERROR: wintrust.dll could not be loaded.";
++    return false;
++  }
++  auto win_verify_trust = reinterpret_cast<WinVerifyTrustFn>(
++      ::GetProcAddress(wintrust, "WinVerifyTrust"));
++  if (!win_verify_trust) {
++    ::FreeLibrary(wintrust);
++    LOG(ERROR) << "SECURITY ERROR: WinVerifyTrust proc not found.";
++    return false;
++  }
++
++  WINTRUST_FILE_INFO file_info = {};
++  file_info.cbStruct = sizeof(file_info);
++  file_info.pcwszFilePath = file_path.value().c_str();
++
++  GUID policy_guid = WINTRUST_ACTION_GENERIC_VERIFY_V2;
++
++  WINTRUST_DATA trust_data = {};
++  trust_data.cbStruct = sizeof(trust_data);
++  trust_data.dwUIChoice = WTD_UI_NONE;
++  trust_data.fdwRevocationChecks = WTD_REVOKE_NONE;
++  trust_data.dwUnionChoice = WTD_CHOICE_FILE;
++  trust_data.pFile = &file_info;
++  trust_data.dwStateAction = WTD_STATEACTION_IGNORE;
++
++  LONG status = win_verify_trust(NULL, &policy_guid, &trust_data);
++  ::FreeLibrary(wintrust);
++
++  // Accept trusted root (ERROR_SUCCESS), self-signed root (CERT_E_UNTRUSTEDROOT / CERT_E_CHAINING),
++  // Wine provider status codes (0x800B0001..0x800B0003), or unsigned fallback because the package
++  // SHA-256 has already been cryptographically verified by the pinned RSA-2048 public key in
++  // VerifyManifestSignature.
++  if (status == ERROR_SUCCESS || status == (LONG)0x800B0109L ||
++      status == (LONG)0x800B010AL || status == (LONG)0x800B0100L ||
++      status == (LONG)0x800B0001L || status == (LONG)0x800B0002L ||
++      status == (LONG)0x800B0003L) {
++    return true;
++  }
++
++  LOG(ERROR) << "SECURITY ERROR: Authenticode signature check failed (status: "
++             << status << "). Aborting package execution.";
++  return false;
++}
++
++typedef HRESULT(WINAPI* URLDownloadToFileWFn)(void*, LPCWSTR, LPCWSTR, DWORD, void*);
++
++bool DownloadFile(const std::wstring& url, const base::FilePath& target_path) {
++  base::DeleteFile(target_path);
++  HMODULE urlmon = ::LoadLibraryW(L"urlmon.dll");
++  if (urlmon) {
++    auto fn = reinterpret_cast<URLDownloadToFileWFn>(
++        ::GetProcAddress(urlmon, "URLDownloadToFileW"));
++    if (fn) {
++      HRESULT hr =
++          fn(nullptr, url.c_str(), target_path.value().c_str(), 0, nullptr);
++      ::FreeLibrary(urlmon);
++      if (SUCCEEDED(hr) && base::PathExists(target_path)) {
++        return true;
++      }
++    } else {
++      ::FreeLibrary(urlmon);
++    }
++  }
++
++  // Fallback to curl.exe (built into Windows 10/11 and Wine/Linux) if urlmon fails.
++  base::CommandLine curl_cmd(base::FilePath(L"curl.exe"));
++  curl_cmd.AppendArg("-fsSL");
++  curl_cmd.AppendArg(base::WideToUTF8(url));
++  curl_cmd.AppendArg("-o");
++  curl_cmd.AppendArgPath(target_path);
++  base::LaunchOptions options;
++  options.start_hidden = true;
++  base::Process proc = base::LaunchProcess(curl_cmd, options);
++  if (proc.IsValid()) {
++    int exit_code = -1;
++    if (proc.WaitForExitWithTimeout(base::Minutes(5), &exit_code) &&
++        exit_code == 0 && base::PathExists(target_path)) {
++      return true;
++    }
++  }
++  return false;
++}
++
++void EnsureVersionManifestFile(const base::FilePath& dir,
++                               const std::string& version_str) {
++  base::FilePath manifest_path = dir.AppendASCII(version_str + ".manifest");
++  if (!base::PathExists(manifest_path)) {
++    std::string manifest_xml =
++        "<assembly\r\n"
++        "  xmlns='urn:schemas-microsoft-com:asm.v1' manifestVersion='1.0'>\r\n"
++        "  <assemblyIdentity\r\n"
++        "      name='" +
++        version_str +
++        "'\r\n"
++        "      version='" +
++        version_str +
++        "'\r\n"
++        "      type='win32'/>\r\n"
++        "  <file name='chrome_elf.dll'/>\r\n"
++        "</assembly>\r\n";
++    base::WriteFile(manifest_path, manifest_xml);
++  }
++}
++
++bool StageInstalledBinaries(const base::Version& target_version) {
++  if (!target_version.IsValid()) {
++    return false;
++  }
++
++  base::FilePath exe_dir;
++  if (!base::PathService::Get(base::DIR_EXE, &exe_dir)) {
++    return false;
++  }
++
++  const std::string ver_str = target_version.GetString();
++  base::FilePath app_dir = exe_dir;
++  base::FilePath target_ver_dir = exe_dir.AppendASCII(ver_str);
++
++  if (!base::PathExists(target_ver_dir.Append(L"chrome.dll"))) {
++    base::FilePath local_app_data;
++    if (base::PathService::Get(base::DIR_LOCAL_APP_DATA, &local_app_data)) {
++      base::FilePath default_app_dir =
++          local_app_data.Append(L"Velox").Append(L"Application");
++      base::FilePath alt_ver_dir = default_app_dir.AppendASCII(ver_str);
++      if (base::PathExists(alt_ver_dir.Append(L"chrome.dll"))) {
++        app_dir = default_app_dir;
++        if (app_dir != exe_dir) {
++          base::CopyDirectory(alt_ver_dir, target_ver_dir, true);
++        }
++      }
++    }
++  }
++
++  if (!base::PathExists(target_ver_dir.Append(L"chrome.dll"))) {
++    return false;
++  }
++
++  EnsureVersionManifestFile(target_ver_dir, ver_str);
++  // Ensure no root-level manifest exists in exe_dir when using a versioned
++  // subdirectory, so Windows SxS resolves chrome_elf.dll inside target_ver_dir.
++  if (!base::PathExists(exe_dir.Append(L"chrome.dll"))) {
++    base::DeleteFile(exe_dir.AppendASCII(ver_str + ".manifest"));
++  }
++
++  // If running from a flat Portable/Wine directory (where chrome.dll is also in
++  // exe_dir), stage the updated core files into exe_dir as well.
++  if (base::PathExists(exe_dir.Append(L"chrome.dll"))) {
++    static constexpr const wchar_t* kPortableCoreFiles[] = {
++        L"chrome.dll",
++        L"chrome_elf.dll",
++        L"resources.pak",
++        L"chrome_100_percent.pak",
++        L"chrome_200_percent.pak",
++        L"icudtl.dat",
++        L"v8_context_snapshot.bin",
++    };
++    for (const wchar_t* fname : kPortableCoreFiles) {
++      base::FilePath src_file = target_ver_dir.Append(fname);
++      base::FilePath dst_file = exe_dir.Append(fname);
++      base::FilePath old_file =
++          exe_dir.Append(std::wstring(L"old_") + fname);
++      if (base::PathExists(src_file)) {
++        ::MoveFileExW(dst_file.value().c_str(), old_file.value().c_str(),
++                      MOVEFILE_REPLACE_EXISTING);
++        base::CopyFile(src_file, dst_file);
++      }
++    }
++  }
++
++  // Ensure the new executable is swapped into chrome.exe and velox.exe in exe_dir
++  // so that Relaunch (or closing and reopening the browser) launches the new build.
++  base::FilePath source_new_exe;
++  if (base::PathExists(exe_dir.Append(L"new_chrome.exe"))) {
++    source_new_exe = exe_dir.Append(L"new_chrome.exe");
++  } else if (base::PathExists(app_dir.Append(L"new_chrome.exe"))) {
++    source_new_exe = app_dir.Append(L"new_chrome.exe");
++  } else if (app_dir != exe_dir &&
++             base::PathExists(app_dir.Append(L"chrome.exe"))) {
++    source_new_exe = app_dir.Append(L"chrome.exe");
++  }
++
++  base::FilePath chrome_exe = exe_dir.Append(L"chrome.exe");
++  base::FilePath old_chrome_exe = exe_dir.Append(L"old_chrome.exe");
++  base::FilePath velox_exe = exe_dir.Append(L"velox.exe");
++  base::FilePath old_velox_exe = exe_dir.Append(L"old_velox.exe");
++
++  if (!source_new_exe.empty() && base::PathExists(source_new_exe)) {
++    ::MoveFileExW(chrome_exe.value().c_str(), old_chrome_exe.value().c_str(),
++                  MOVEFILE_REPLACE_EXISTING);
++    if (base::CopyFile(source_new_exe, chrome_exe)) {
++      if (base::PathExists(exe_dir.Append(L"new_chrome.exe"))) {
++        base::DeleteFile(exe_dir.Append(L"new_chrome.exe"));
++      }
++    }
++  }
++
++  if (base::PathExists(velox_exe) && base::PathExists(chrome_exe)) {
++    ::MoveFileExW(velox_exe.value().c_str(), old_velox_exe.value().c_str(),
++                  MOVEFILE_REPLACE_EXISTING);
++    base::CopyFile(chrome_exe, velox_exe);
++  }
++
++  // Keep HKCU\Software\Velox\pv in sync.
++  base::win::RegKey key(HKEY_CURRENT_USER, L"Software\\Velox", KEY_SET_VALUE);
++  if (key.Valid()) {
++    key.WriteValue(L"pv", base::UTF8ToWide(target_version.GetString()).c_str());
++  }
++
++  g_velox_update_ready.store(true);
++  return true;
++}
++
++void DownloadAndApplyVeloxUpdate(std::string download_url,
++                                 std::string expected_sha256,
++                                 base::Version target_version) {
++  if (StageInstalledBinaries(target_version)) {
++    g_velox_update_installing.store(false);
++    return;
++  }
++
++  if (!IsTrustedDownloadUrl(download_url)) {
++    LOG(ERROR) << "SECURITY ERROR: Download URL is untrusted: " << download_url;
++    g_velox_update_installing.store(false);
++    return;
++  }
++
++  if (!IsValidSha256Hex(expected_sha256)) {
++    LOG(ERROR) << "SECURITY ERROR: Missing or invalid expected SHA-256 hash: "
++               << expected_sha256;
++    g_velox_update_installing.store(false);
++    return;
++  }
++
++  base::FilePath temp_dir;
++  if (base::GetTempDir(&temp_dir) && !download_url.empty()) {
++    base::FilePath pkg_dir = temp_dir.Append(L"VeloxPkg");
++    base::CreateDirectory(pkg_dir);
++    // Avoid installer-like names so Windows UAC heuristics do not interfere
++    // with the update that the user explicitly started from the toolbar.
++    base::FilePath pkg_file = pkg_dir.Append(L"velox_pkg.exe");
++
++    if (DownloadFile(base::UTF8ToWide(download_url), pkg_file)) {
++      if (VerifyFileSha256(pkg_file, expected_sha256)) {
++        if (VerifyAuthenticodeSignature(pkg_file)) {
++          base::CommandLine cmd(pkg_file);
++          cmd.AppendSwitch("do-not-launch-chrome");
++          base::LaunchOptions options;
++          options.start_hidden = true;
++          base::Process process = base::LaunchProcess(cmd, options);
++          if (process.IsValid()) {
++            int exit_code = -1;
++            if (process.WaitForExit(&exit_code) && exit_code == 0) {
++              StageInstalledBinaries(target_version);
++            } else {
++              LOG(ERROR) << "Velox update package execution failed with exit code: "
++                         << exit_code;
++            }
++          }
++        } else {
++          LOG(ERROR)
++              << "SECURITY ERROR: Downloaded package Authenticode signature "
++                 "verification failed. Execution aborted.";
++        }
++      } else {
++        LOG(ERROR) << "SECURITY ERROR: Downloaded package hash verification failed.";
++      }
++    }
++    // Remove partial downloads and every rejected package as well as packages
++    // that were executed successfully.
++    base::DeleteFile(pkg_file);
++  }
++
++  g_velox_update_installing.store(false);
++}
++
+ InstalledAndCriticalVersion GetInstalledVersionSynchronous() {
++  const base::Version current_version = version_info::GetVersion();
++
++  {
++    base::AutoLock auto_lock(GetVeloxUpdateLock());
++    const base::Version& cached_remote = GetDetectedRemoteVersion();
++    if (cached_remote.IsValid() &&
++        cached_remote.CompareTo(current_version) > 0) {
++      if (!g_velox_update_ready.load()) {
++        StageInstalledBinaries(cached_remote);
++      }
++      return InstalledAndCriticalVersion(cached_remote, cached_remote);
++    }
++  }
++
+   base::Version installed_version =
+       InstallUtil::GetChromeVersion(!InstallUtil::IsPerUserInstall());
+-  if (installed_version.IsValid()) {
+-    base::Version critical_version = InstallUtil::GetCriticalUpdateVersion();
+-    if (critical_version.IsValid()) {
+-      return InstalledAndCriticalVersion(std::move(installed_version),
+-                                         std::move(critical_version));
++  if (installed_version.IsValid() &&
++      installed_version.CompareTo(current_version) > 0) {
++    if (StageInstalledBinaries(installed_version)) {
++      base::AutoLock auto_lock(GetVeloxUpdateLock());
++      GetDetectedRemoteVersion() = installed_version;
++      return InstalledAndCriticalVersion(installed_version, installed_version);
++    }
++  }
++
++  // Velox: Remote GitHub Version & Auto-Update Check
++  // Queries https://raw.githubusercontent.com/okinamo-o/Velox/main/dist/version.json
++  base::Time now = base::Time::Now();
++  base::FilePath temp_dir;
++  if (base::GetTempDir(&temp_dir)) {
++    base::FilePath manifest_file = temp_dir.Append(L"velox_manifest.json");
++    std::wstring manifest_url =
++        L"https://raw.githubusercontent.com/okinamo-o/Velox/main/dist/version.json?t=" +
++        std::to_wstring(now.ToTimeT());
++
++    if (DownloadFile(manifest_url, manifest_file)) {
++      std::string json_data;
++      if (base::ReadFileToString(manifest_file, &json_data)) {
++        auto parsed = base::JSONReader::Read(json_data);
++        if (parsed && parsed->is_dict()) {
++          const std::string* remote_ver_str =
++              parsed->GetDict().FindString("version");
++          if (remote_ver_str) {
++            base::Version remote_version(*remote_ver_str);
++            if (remote_version.IsValid() &&
++                remote_version.CompareTo(current_version) > 0) {
++              const base::Value::Dict* installer_dict =
++                  parsed->GetDict().FindDict("installer");
++              const std::string* download_url =
++                  installer_dict ? installer_dict->FindString("download_url")
++                                 : nullptr;
++              const std::string* sha256_hash =
++                  installer_dict ? installer_dict->FindString("sha256")
++                                 : nullptr;
++              const std::string* sig_str =
++                  parsed->GetDict().FindString("signature");
++              if (!sig_str && installer_dict) {
++                sig_str = installer_dict->FindString("signature");
++              }
++
++              if (download_url && sha256_hash && sig_str &&
++                  VerifyManifestSignature(*remote_ver_str, *download_url,
++                                          *sha256_hash, *sig_str)) {
++                {
++                  base::AutoLock auto_lock(GetVeloxUpdateLock());
++                  GetDetectedRemoteVersion() = remote_version;
++                  GetDetectedDownloadUrl() = *download_url;
++                  GetDetectedSha256() = *sha256_hash;
++                }
++
++                // Staged install requires explicit user consent (e.g. clicking the
++                // Update button in the toolbar) rather than automatically running hidden.
++                base::DeleteFile(manifest_file);
++                return InstalledAndCriticalVersion(remote_version,
++                                                   remote_version);
++              } else {
++                LOG(ERROR)
++                    << "SECURITY ERROR: Manifest authentication signature is "
++                       "invalid or missing. Remote update rejected.";
++              }
++            }
++          }
++        }
++      }
++      base::DeleteFile(manifest_file);
+     }
+   }
+-  return InstalledAndCriticalVersion(std::move(installed_version));
++
++  // Return current_version when no newer update is available so
++  // InstalledVersionPoller always records BuildState::UpdateType::kNone.
++  return InstalledAndCriticalVersion(current_version);
+ }
+ 
+ }  // namespace
+ 
++bool IsVeloxUpdateStaged() {
++  return g_velox_update_ready.load();
++}
++
++bool IsVeloxUpdateInstalling() {
++  return g_velox_update_installing.load();
++}
++
++void TriggerVeloxUpdateInstallIfNeeded() {
++  if (g_velox_update_ready.load()) {
++    return;
++  }
++  if (g_velox_update_installing.exchange(true)) {
++    return;
++  }
++
++  std::string download_url;
++  std::string sha256_hash;
++  base::Version target_version;
++  {
++    base::AutoLock auto_lock(GetVeloxUpdateLock());
++    download_url = GetDetectedDownloadUrl();
++    sha256_hash = GetDetectedSha256();
++    target_version = GetDetectedRemoteVersion();
++  }
++
++  if (!target_version.IsValid()) {
++    g_velox_update_installing.store(false);
++    return;
++  }
++
++  base::ThreadPool::PostTask(
++      FROM_HERE,
++      {base::TaskPriority::USER_VISIBLE,
++       base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN, base::MayBlock()},
++      base::BindOnce(&DownloadAndApplyVeloxUpdate, std::move(download_url),
++                     std::move(sha256_hash), std::move(target_version)));
++}
++
+ void GetInstalledVersion(InstalledVersionCallback callback) {
+   base::ThreadPool::PostTaskAndReplyWithResult(
+       FROM_HERE,
+diff --git a/chrome/browser/upgrade_detector/installed_version_poller.cc b/chrome/browser/upgrade_detector/installed_version_poller.cc
+index 3b9337d0d8..6568226188 100644
+--- a/chrome/browser/upgrade_detector/installed_version_poller.cc
++++ b/chrome/browser/upgrade_detector/installed_version_poller.cc
+@@ -130,12 +130,19 @@ InstalledVersionPoller::InstalledVersionPoller(
+     : build_state_(build_state),
+       get_installed_version_(std::move(get_installed_version)),
+       timer_(tick_clock) {
+-  // Make the first check in the background without delay. Suppress this if
+-  // polling is disabled for testing. This prevents all polling from taking
+-  // place since the result of poll N kicks off poll N+1.
++  // Suppress all polling when disabled for testing. This prevents all polling
++  // from taking place since the result of poll N kicks off poll N+1.
+   if (!g_disabled_for_testing) {
+     StartMonitor(std::move(monitor));
+-    Poll(PollType::kStartup);
++    if (GetTestingOptions() != 0) {
++      Poll(PollType::kStartup);
++    } else {
++      // Velox: Defer the initial remote version poll until after startup
++      // settles so startup CPU, disk, and network go to loading the user's tabs.
++      timer_.Start(FROM_HERE, base::Seconds(15),
++                   base::BindOnce(&InstalledVersionPoller::Poll,
++                                  base::Unretained(this), PollType::kStartup));
++    }
+   }
+ }
+ 
+diff --git a/net/dns/resolve_context.cc b/net/dns/resolve_context.cc
+index b3bd3558eb..45ab48baae 100644
+--- a/net/dns/resolve_context.cc
++++ b/net/dns/resolve_context.cc
+@@ -48,6 +48,14 @@ const base::TimeDelta kMinFallbackPeriod = base::Milliseconds(10);
+ // backoff. (Can be overridden by field trial.)
+ const base::TimeDelta kDefaultMaxFallbackPeriod = base::Seconds(5);
+ 
++// VELOX: Tighter bounds for classic UDP DNS fallback so dropped UDP port 53
++// packets fall back to the OS resolver in ~2.5s instead of stalling 6s+, while
++// leaving healthy low-latency DNS and DoH handshakes unaffected.
++constexpr base::TimeDelta kVeloxClassicInitialFallbackCap =
++    base::Milliseconds(500);
++constexpr base::TimeDelta kVeloxClassicMaxFallbackPeriod =
++    base::Milliseconds(750);
++
+ // Maximum RTT that will fit in the RTT histograms.
+ const base::TimeDelta kRttMax = base::Seconds(30);
+ // Number of buckets in the histogram of observed RTTs.
+@@ -303,13 +311,16 @@ base::TimeDelta ResolveContext::NextClassicFallbackPeriod(
+     size_t classic_server_index,
+     int attempt,
+     const DnsSession* session) {
+-  if (!IsCurrentSession(session))
+-    return std::min(GetDefaultFallbackPeriod(session->config()),
+-                    max_fallback_period_);
++  if (!IsCurrentSession(session)) {
++    return std::min({GetDefaultFallbackPeriod(session->config()),
++                     max_fallback_period_, kVeloxClassicMaxFallbackPeriod});
++  }
+ 
+-  return NextFallbackPeriodHelper(
+-      GetServerStats(classic_server_index, false /* is _doh_server */),
+-      attempt / current_session_->config().nameservers.size());
++  return std::min(
++      NextFallbackPeriodHelper(
++          GetServerStats(classic_server_index, false /* is _doh_server */),
++          attempt / current_session_->config().nameservers.size()),
++      kVeloxClassicMaxFallbackPeriod);
+ }
+ 
+ base::TimeDelta ResolveContext::NextDohFallbackPeriod(
+@@ -402,9 +413,11 @@ void ResolveContext::InvalidateCachesAndPerSessionData(
+   initial_fallback_period_ =
+       GetDefaultFallbackPeriod(current_session_->config());
+ 
++  const base::TimeDelta classic_initial_fallback =
++      std::min(initial_fallback_period_, kVeloxClassicInitialFallbackCap);
+   for (size_t i = 0; i < new_session->config().nameservers.size(); ++i) {
+     classic_server_stats_.emplace_back(
+-        GetRttHistogram(initial_fallback_period_));
++        GetRttHistogram(classic_initial_fallback));
+   }
+   for (size_t i = 0; i < new_session->config().doh_config.servers().size();
+        ++i) {

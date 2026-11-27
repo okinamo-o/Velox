@@ -6,7 +6,7 @@
 #>
 
 param(
-    [string]$Version = "134.0.6998.186",
+    [string]$Version = "134.0.6998.188",
     [string]$SrcDir = "D:\Velox\src",
     [string]$DistDir = "D:\Velox\dist",
     [switch]$Rebuild
@@ -81,9 +81,17 @@ if (Test-Path $AppDir) {
     if (Test-Path $TempPortable) { Remove-Item $TempPortable -Recurse -Force }
     New-Item -ItemType Directory -Path $TempPortable | Out-Null
     
-    Copy-Item "$AppDir\*" -Destination $TempPortable -Recurse -Exclude "*.log","*.dmp","*.old" -Force
+    Copy-Item "$AppDir\*" -Destination $TempPortable -Recurse -Exclude "*.log","*.dmp","*.old","old_*","*.old_*","mini_installer.exe","velox_installer.exe" -Force
     Get-ChildItem -Path $TempPortable -Directory | Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' -and $_.Name -ne $Version } | Remove-Item -Recurse -Force
-    if (Test-Path "$TempPortable\old_chrome.exe") { Remove-Item "$TempPortable\old_chrome.exe" -Force }
+    # Strip installer archive cache and any backup binaries so the portable ZIP stays clean and compact
+    $PortableInstallerCache = Join-Path $TempPortable "$Version\Installer"
+    if (Test-Path $PortableInstallerCache) { Remove-Item $PortableInstallerCache -Recurse -Force }
+    Get-ChildItem -Path $TempPortable -Recurse -File -ErrorAction SilentlyContinue | Where-Object {
+        $_.Name -like "old_*" -or $_.Name -like "*.old*" -or $_.Name -eq "mini_installer.exe" -or $_.Name -eq "velox_installer.exe"
+    } | Remove-Item -Force -ErrorAction SilentlyContinue
+    # Ensure no root-level version manifest exists alongside the versioned folder
+    $RootManifest = Join-Path $TempPortable "$Version.manifest"
+    if (Test-Path $RootManifest) { Remove-Item $RootManifest -Force }
     Compress-Archive -Path "$TempPortable\*" -DestinationPath $PortableZip -CompressionLevel Optimal
     Remove-Item $TempPortable -Recurse -Force
     
@@ -117,16 +125,13 @@ $ManifestData = [ordered]@{
         download_url= "https://github.com/okinamo-o/Velox/releases/download/v$Version/Velox-v$Version-Portable-x64.zip"
     }
     notes         = @(
-        "🔮 Cyber-Glass Tab Context Menu: Midnight glow frame, floating pills, keycap shortcut badges & crisp action icons",
-        "🏝️ NTP Tab Islands: Live tab preview capsules with tab counts and favicons",
-        "🔗 Accurate Most Used Links: Powered by real browsing history and TopSites domain deduplication",
-        "⚡ Flicker-free split screen with stable view attachment and zero blank flashes",
-        "🌌 Customizable Spaces (Workspaces): Switch via Ctrl+1/2/3, rename with custom titles and quick preset chips",
-        "📝 New Tab Scratchpad & Focus Dashboard: Persistent quick notes, focus timer, RAM & shield stats",
-        "🛡️ Velox Shield intelligent tracker & ad blocking built-in",
-        "🚀 Ultra hardware-accelerated Blink rendering engine",
-        "🎨 Modern futuristic glow UI with clean non-client frame",
-        "🔔 Intelligent dynamic update notifications with one-click restore"
+        "🛡️ Domain-Keyed Fingerprint Farbling: Per-session, per-eTLD+1 deterministic protection across Canvas, WebGL, WebAudio, plugins & hardwareConcurrency",
+        "⚡ Faster Startup & Session Restore: Batched Spaces TabStrip layout, staggered background favicons, deferred BEST_EFFORT update check & faster UDP DNS fallback",
+        "🔐 Google & Gmail Session Stability: Fixed spurious account sign-outs and hardened NTP Gmail widget auth handling",
+        "🌌 Spaces & Auto-Hide Reliability: Fixed new tabs opening in another space, cross-space tab group bleed, and header auto-hide while interacting with widgets",
+        "🧩 Customizable NTP Widgets Studio: Modular New Tab widgets and cleaner hover tab thumbnail handling without waking background tabs",
+        "📦 Compact Portable Build: Stripped cached installer archives and stale backup binaries from the Portable ZIP",
+        "🔔 Cryptographically Signed Auto-Updates: Pinned RSA-2048 release manifest verification with one-click update staging"
     )
 }
 

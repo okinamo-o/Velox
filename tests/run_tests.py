@@ -230,8 +230,96 @@ class TestPatchesRegistry(unittest.TestCase):
         content = patch_0008.read_text(encoding="utf-8")
         self.assertIn("VeloxShieldNavigationThrottle", content)
         self.assertIn("VeloxShieldURLLoaderThrottle", content)
-        self.assertIn("EncodeImageInternal", content)
-        self.assertIn("getImageDataInternal", content)
+        # Non-deterministic per-call canvas noise and impossible WebGL strings trigger
+        # anti-bot session revocations on Google/Gmail and must not be injected.
+        self.assertNotIn("tl_seed", content)
+        self.assertNotIn("Google Inc. (Google)", content)
+
+    def test_gmail_session_integrity_and_widget_feed_hardening(self):
+        img_buf = REPO_ROOT / "src" / "third_party" / "blink" / "renderer" / "platform" / "graphics" / "image_data_buffer.cc"
+        canvas_2d = REPO_ROOT / "src" / "third_party" / "blink" / "renderer" / "modules" / "canvas" / "canvas2d" / "base_rendering_context_2d.cc"
+        webgl_ctx = REPO_ROOT / "src" / "third_party" / "blink" / "renderer" / "modules" / "webgl" / "webgl_rendering_context_base.cc"
+        ntp_cc = REPO_ROOT / "src" / "chrome" / "browser" / "ui" / "webui" / "new_tab_page" / "new_tab_page_ui.cc"
+        ntp_ts = REPO_ROOT / "src" / "chrome" / "browser" / "resources" / "new_tab_page" / "app.ts"
+
+        self.assertNotIn("tl_seed", img_buf.read_text(encoding="utf-8"))
+        self.assertNotIn("tl_seed", canvas_2d.read_text(encoding="utf-8"))
+        webgl_text = webgl_ctx.read_text(encoding="utf-8")
+        self.assertNotIn("Google Inc. (Google)", webgl_text)
+        self.assertNotIn("ANGLE (Google, Direct3D11 vs_5_0 ps_5_0)", webgl_text)
+
+        ntp_cc_text = ntp_cc.read_text(encoding="utf-8")
+        self.assertIn("update_first_party_url_on_redirect = true", ntp_cc_text)
+        self.assertIn("net::IsolationInfo::Create", ntp_cc_text)
+        self.assertIn("transientError", ntp_cc_text)
+        self.assertIn("transientError", ntp_ts.read_text(encoding="utf-8"))
+
+    def test_spaces_new_tab_isolation_and_session_restore_scoping(self):
+        toolbar_cc = REPO_ROOT / "src" / "chrome" / "browser" / "ui" / "views" / "toolbar" / "toolbar_view.cc"
+        tab_strip_cc = REPO_ROOT / "src" / "chrome" / "browser" / "ui" / "views" / "tabs" / "tab_strip.cc"
+        patch_0023 = REPO_ROOT / "patches" / "0023-obsidian-design-spaces-menu-and-drag-to-split.patch"
+
+        tb_text = toolbar_cc.read_text(encoding="utf-8")
+        ts_text = tab_strip_cc.read_text(encoding="utf-8")
+        p23_text = patch_0023.read_text(encoding="utf-8")
+
+        self.assertIn("class VeloxSessionRestoreObserver final : public SessionRestoreObserver", tb_text)
+        self.assertIn("IsGenericNewTabOrBlankUrl", tb_text)
+        self.assertIn("ConsumeSessionRestoredWebContents", tb_text)
+        self.assertIn("st.restore_eligible_tabs.contains(tab)", tb_text)
+        self.assertIn("velox::RegisterTabInWorkspace(this, new_tab_ptr, model_index);", ts_text)
+        self.assertIn("VeloxSessionRestoreObserver", p23_text)
+
+    def test_velox_domain_keyed_fingerprint_farbling(self):
+        rph_cc = REPO_ROOT / "src" / "content" / "browser" / "renderer_host" / "render_process_host_impl.cc"
+        digest_cc = REPO_ROOT / "src" / "third_party" / "blink" / "renderer" / "platform" / "privacy_budget" / "identifiability_digest_helpers.cc"
+        exec_cc = REPO_ROOT / "src" / "third_party" / "blink" / "renderer" / "core" / "execution_context" / "execution_context.cc"
+        nav_base_cc = REPO_ROOT / "src" / "third_party" / "blink" / "renderer" / "core" / "execution_context" / "navigator_base.cc"
+        html_canvas_cc = REPO_ROOT / "src" / "third_party" / "blink" / "renderer" / "core" / "html" / "canvas" / "html_canvas_element.cc"
+        canvas_2d_cc = REPO_ROOT / "src" / "third_party" / "blink" / "renderer" / "modules" / "canvas" / "canvas2d" / "base_rendering_context_2d.cc"
+        webgl_cc = REPO_ROOT / "src" / "third_party" / "blink" / "renderer" / "modules" / "webgl" / "webgl_rendering_context_base.cc"
+        offline_audio_cc = REPO_ROOT / "src" / "third_party" / "blink" / "renderer" / "modules" / "webaudio" / "offline_audio_context.cc"
+        plugins_cc = REPO_ROOT / "src" / "third_party" / "blink" / "renderer" / "modules" / "plugins" / "dom_plugin_array.cc"
+        patch_0027 = REPO_ROOT / "patches" / "0027-velox-domain-keyed-fingerprint-farbling.patch"
+
+        self.assertIn("velox-farbling-seed", rph_cc.read_text(encoding="utf-8"))
+        self.assertIn("VeloxDeriveDomainFarblingKey", digest_cc.read_text(encoding="utf-8"))
+        self.assertIn("RegistrableDomain()", exec_cc.read_text(encoding="utf-8"))
+        self.assertIn("VeloxGetExecutionContextFarblingKey", nav_base_cc.read_text(encoding="utf-8"))
+        self.assertIn("VeloxSetScopedCanvasFarblingKey", html_canvas_cc.read_text(encoding="utf-8"))
+        self.assertIn("VeloxFarblePixmap", canvas_2d_cc.read_text(encoding="utf-8"))
+        self.assertIn("VeloxFarbleRgbaBytes", webgl_cc.read_text(encoding="utf-8"))
+        self.assertIn("VeloxFarbleAudioSpan", offline_audio_cc.read_text(encoding="utf-8"))
+        self.assertIn("VeloxGetExecutionContextFarblingKey", plugins_cc.read_text(encoding="utf-8"))
+        self.assertTrue(patch_0027.exists())
+
+    def test_velox_startup_performance_optimizations(self):
+        toolbar_cc = REPO_ROOT / "src" / "chrome" / "browser" / "ui" / "views" / "toolbar" / "toolbar_view.cc"
+        delegate_cc = REPO_ROOT / "src" / "chrome" / "browser" / "sessions" / "session_restore_delegate.cc"
+        poller_cc = REPO_ROOT / "src" / "chrome" / "browser" / "upgrade_detector" / "installed_version_poller.cc"
+        ver_win_cc = REPO_ROOT / "src" / "chrome" / "browser" / "upgrade_detector" / "get_installed_version_win.cc"
+        ver_linux_cc = REPO_ROOT / "src" / "chrome" / "browser" / "upgrade_detector" / "get_installed_version_linux.cc"
+        resolve_cc = REPO_ROOT / "src" / "net" / "dns" / "resolve_context.cc"
+        patch_0028 = REPO_ROOT / "patches" / "0028-velox-startup-performance-optimizations.patch"
+
+        tb_text = toolbar_cc.read_text(encoding="utf-8")
+        del_text = delegate_cc.read_text(encoding="utf-8")
+        pol_text = poller_cc.read_text(encoding="utf-8")
+        win_text = ver_win_cc.read_text(encoding="utf-8")
+        lin_text = ver_linux_cc.read_text(encoding="utf-8")
+        res_text = resolve_cc.read_text(encoding="utf-8")
+
+        self.assertIn("FlushDeferredSessionRestoreSpacesLayout", tb_text)
+        self.assertIn("OnSessionRestoreFinishedLoadingTabs", tb_text)
+        self.assertIn("deferred_restore_layout_pending", tb_text)
+        self.assertIn("deferred_favicon_tabs", del_text)
+        self.assertIn("base::Milliseconds(400)", del_text)
+        self.assertIn("base::Seconds(15)", pol_text)
+        self.assertIn("base::TaskPriority::BEST_EFFORT", win_text)
+        self.assertIn("base::TaskPriority::BEST_EFFORT", lin_text)
+        self.assertIn("kVeloxClassicInitialFallbackCap", res_text)
+        self.assertIn("kVeloxClassicMaxFallbackPeriod", res_text)
+        self.assertTrue(patch_0028.exists())
 
     def test_patch_0013_privacy_search_and_about_status(self):
         patch_0013 = REPO_ROOT / "patches" / "0013-privacy-search-defaults-and-clean-about-status.patch"
@@ -308,6 +396,8 @@ class TestPatchesRegistry(unittest.TestCase):
             "0020-comet-tabs-and-audio-icon-swap.patch",
             "0021-spaces-workspaces-custom-rename-and-focus-dashboard.patch",
             "0022-flicker-free-split-screen-and-docking-fix.patch",
+            "0023-obsidian-design-spaces-menu-and-drag-to-split.patch",
+            "0024-tab-close-right-selection-and-ntp-compact-redesign.patch",
         }
 
         for p in sorted(patches_dir.glob("*.patch")):

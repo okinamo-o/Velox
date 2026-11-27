@@ -1,0 +1,841 @@
+diff --git a/content/browser/renderer_host/render_process_host_impl.cc b/content/browser/renderer_host/render_process_host_impl.cc
+index e49a7ccae6..a8f21f92f8 100644
+--- a/content/browser/renderer_host/render_process_host_impl.cc
++++ b/content/browser/renderer_host/render_process_host_impl.cc
+@@ -1330,16 +1330,20 @@ size_t RenderProcessHost::GetMaxRendererProcessCount() {
+   if (!max_count) {
+     static constexpr size_t kEstimatedWebContentsMemoryUsage =
+ #if defined(ARCH_CPU_64_BITS)
+-        85;  // In MB
++        200;  // In MB (VELOX: modern web pages average ~200MB; prevents process explosion)
+ #else
+-        60;  // In MB
++        120;  // In MB
+ #endif
+     max_count = base::SysInfo::AmountOfPhysicalMemoryMB() / 2;
+     max_count /= kEstimatedWebContentsMemoryUsage;
+ 
+     static constexpr size_t kMinRendererProcessCount = 3;
++    // VELOX: Cap the soft maximum renderer processes to 26 on 64-bit systems to avoid
++    // 60-100 runaway renderer processes under multi-tab browsing while preserving strict Site Isolation.
++    static constexpr size_t kVeloxMaxRendererProcessCap = 26;
+     static const size_t kMaxRendererProcessCount =
+-        RenderProcessHostImpl::GetPlatformMaxRendererProcessCount();
++        std::min(RenderProcessHostImpl::GetPlatformMaxRendererProcessCount(),
++                 kVeloxMaxRendererProcessCap);
+     DCHECK_LE(kMinRendererProcessCount, kMaxRendererProcessCount);
+ 
+     max_count = std::clamp(max_count, kMinRendererProcessCount,
+@@ -3257,6 +3261,27 @@ void RenderProcessHostImpl::AppendRendererCommandLine(
+   GetContentClient()->browser()->AppendExtraCommandLineSwitches(
+       command_line, GetDeprecatedID());
+ 
++  // VELOX Privacy Shield: Provide a single browser-session farbling seed across
++  // all renderer subprocesses of the same profile class (normal vs OTR) so
++  // eTLD+1 farbling stays 100% deterministic across Site Isolation & discards
++  // while rotating across browser restarts and Incognito sessions.
++  static const uint64_t kNormalSessionFarblingSeed = []() {
++    uint64_t s = base::RandUint64();
++    return s ? s : 0x9e3779b97f4a7c15ULL;
++  }();
++  static const uint64_t kOffTheRecordSessionFarblingSeed = []() {
++    uint64_t s = base::RandUint64();
++    return (s && s != kNormalSessionFarblingSeed)
++               ? s
++               : (kNormalSessionFarblingSeed ^ 0xbf58476d1ce4e5b9ULL);
++  }();
++  const bool is_otr =
++      GetBrowserContext() && GetBrowserContext()->IsOffTheRecord();
++  command_line->AppendSwitchASCII(
++      "velox-farbling-seed",
++      base::NumberToString(is_otr ? kOffTheRecordSessionFarblingSeed
++                                  : kNormalSessionFarblingSeed));
++
+   if (IsPdf())
+     command_line->AppendSwitch(switches::kPdfRenderer);
+ 
+@@ -4674,28 +4699,44 @@ bool RenderProcessHost::IsProcessLimitReached() {
+ RenderProcessHost* RenderProcessHostImpl::GetExistingProcessHost(
+     SiteInstanceImpl* site_instance) {
+   // First figure out which existing renderers we can use.
+-  std::vector<RenderProcessHost*> suitable_renderers;
+-  suitable_renderers.reserve(RenderProcessHostImpl::GetProcessCount());
++  // VELOX: Partition suitable renderers into background vs foreground so we
++  // prefer reusing background processes first. This prevents adding work to
++  // processes actively rendering visible tabs or Split Screen panes.
++  std::vector<RenderProcessHost*> background_renderers;
++  std::vector<RenderProcessHost*> foreground_renderers;
+ 
+   for (iterator iter(AllHostsIterator()); !iter.IsAtEnd(); iter.Advance()) {
+     // The spare RenderProcessHost will have been considered by this point.
+     // Ensure it is not added to the collection of suitable renderers.
+-    if (iter.GetCurrentValue()->IsSpare()) {
++    RenderProcessHost* host = iter.GetCurrentValue();
++    if (host->IsSpare()) {
+       continue;
+     }
+-    if (MayReuseAndIsSuitable(iter.GetCurrentValue(), site_instance))
+-      suitable_renderers.push_back(iter.GetCurrentValue());
++    if (MayReuseAndIsSuitable(host, site_instance)) {
++      if (host->VisibleClientCount() == 0) {
++        background_renderers.push_back(host);
++      } else {
++        foreground_renderers.push_back(host);
++      }
++    }
+   }
+ 
+-  MAYBEVLOG(4) << __func__ << ": Found " << suitable_renderers.size()
+-               << " suitable process hosts out of "
++  MAYBEVLOG(4) << __func__ << ": Found "
++               << (background_renderers.size() + foreground_renderers.size())
++               << " suitable process hosts (" << background_renderers.size()
++               << " bg, " << foreground_renderers.size() << " fg) out of "
+                << RenderProcessHostImpl::GetProcessCount() << ".";
+ 
++  // VELOX Smart Consolidation: Prefer background processes first so foreground /
++  // Split-Screen visible tabs retain dedicated render threads for zero-jank UI.
++  const std::vector<RenderProcessHost*>& candidates =
++      !background_renderers.empty() ? background_renderers : foreground_renderers;
++
+   // Now pick a random suitable renderer, if we have any.
+-  if (!suitable_renderers.empty()) {
+-    int suitable_count = static_cast<int>(suitable_renderers.size());
++  if (!candidates.empty()) {
++    int suitable_count = static_cast<int>(candidates.size());
+     int random_index = base::RandInt(0, suitable_count - 1);
+-    return suitable_renderers[random_index];
++    return candidates[random_index];
+   }
+ 
+   return nullptr;
+@@ -5573,7 +5614,7 @@ RenderProcessHostImpl::FindReusableProcessHostForSiteInstance(
+         &eligible_background_hosts);
+   }
+ 
+-  if (eligible_foreground_hosts.empty()) {
++  if (eligible_background_hosts.empty()) {
+     // If needed, add the RenderProcessHosts hosting a frame for |site_url| to
+     // the list of eligible RenderProcessHosts.
+     SiteProcessCountTracker* committed_tracker =
+@@ -5601,17 +5642,19 @@ RenderProcessHostImpl::FindReusableProcessHostForSiteInstance(
+     }
+   }
+ 
+-  if (!eligible_foreground_hosts.empty()) {
+-    int index = base::RandInt(0, eligible_foreground_hosts.size() - 1);
+-    auto iterator = eligible_foreground_hosts.begin();
++  // VELOX Smart Consolidation: Prefer background processes first so foreground /
++  // Split-Screen visible tabs retain dedicated render threads for zero-jank UI.
++  if (!eligible_background_hosts.empty()) {
++    int index = base::RandInt(0, eligible_background_hosts.size() - 1);
++    auto iterator = eligible_background_hosts.begin();
+     for (int i = 0; i < index; ++i)
+       ++iterator;
+     return *iterator;
+   }
+ 
+-  if (!eligible_background_hosts.empty()) {
+-    int index = base::RandInt(0, eligible_background_hosts.size() - 1);
+-    auto iterator = eligible_background_hosts.begin();
++  if (!eligible_foreground_hosts.empty()) {
++    int index = base::RandInt(0, eligible_foreground_hosts.size() - 1);
++    auto iterator = eligible_foreground_hosts.begin();
+     for (int i = 0; i < index; ++i)
+       ++iterator;
+     return *iterator;
+diff --git a/third_party/blink/renderer/core/execution_context/execution_context.cc b/third_party/blink/renderer/core/execution_context/execution_context.cc
+index ead61f60ea..4ac74f11fe 100644
+--- a/third_party/blink/renderer/core/execution_context/execution_context.cc
++++ b/third_party/blink/renderer/core/execution_context/execution_context.cc
+@@ -46,8 +46,12 @@
+ #include "third_party/blink/renderer/core/fileapi/public_url_manager.h"
+ #include "third_party/blink/renderer/core/frame/csp/content_security_policy.h"
+ #include "third_party/blink/renderer/core/frame/csp/execution_context_csp_delegate.h"
++#include "third_party/blink/renderer/core/frame/frame.h"
+ #include "third_party/blink/renderer/core/frame/local_dom_window.h"
++#include "third_party/blink/renderer/core/frame/local_frame.h"
+ #include "third_party/blink/renderer/core/frame/web_feature.h"
++#include "third_party/blink/renderer/core/page/frame_tree.h"
++#include "third_party/blink/renderer/platform/privacy_budget/identifiability_digest_helpers.h"
+ #include "third_party/blink/renderer/core/inspector/console_message.h"
+ #include "third_party/blink/renderer/core/inspector/inspector_audits_issue.h"
+ #include "third_party/blink/renderer/core/loader/document_loader.h"
+@@ -719,4 +723,47 @@ bool ExecutionContext::IsInjectionMitigatedContext() const {
+          GetContentSecurityPolicy()->TrustedTypesRequired();
+ }
+ 
++PLATFORM_EXPORT uint64_t VeloxDeriveDomainFarblingKey(
++    const String& domain_or_origin,
++    uint64_t domain_salt);
++
++CORE_EXPORT uint64_t VeloxGetExecutionContextFarblingKey(
++    const ExecutionContext* context,
++    uint64_t domain_salt) {
++  if (!context) {
++    return 0;
++  }
++  const SecurityOrigin* target_origin = nullptr;
++  if (const auto* window = DynamicTo<LocalDOMWindow>(context)) {
++    if (LocalFrame* frame = window->GetFrame()) {
++      Frame& top_frame = frame->Tree().Top();
++      if (const SecurityContext* top_sc = top_frame.GetSecurityContext()) {
++        const SecurityOrigin* top_origin = top_sc->GetSecurityOrigin();
++        if (top_origin && !top_origin->IsOpaque()) {
++          target_origin = top_origin;
++        }
++      }
++    }
++  }
++  if (!target_origin) {
++    target_origin = context->GetSecurityOrigin();
++  }
++
++  String site_key = "opaque";
++  if (target_origin && !target_origin->IsOpaque()) {
++    String reg_domain = target_origin->RegistrableDomain();
++    if (!reg_domain.empty()) {
++      site_key = reg_domain;
++    } else if (!target_origin->Host().empty()) {
++      site_key = target_origin->Host();
++    } else {
++      site_key = target_origin->ToString();
++    }
++  } else if (!context->Url().IsEmpty()) {
++    site_key = context->Url().GetString();
++  }
++
++  return VeloxDeriveDomainFarblingKey(site_key, domain_salt);
++}
++
+ }  // namespace blink
+diff --git a/third_party/blink/renderer/core/execution_context/navigator_base.cc b/third_party/blink/renderer/core/execution_context/navigator_base.cc
+index 64bdfb1a10..5683e1ce2e 100644
+--- a/third_party/blink/renderer/core/execution_context/navigator_base.cc
++++ b/third_party/blink/renderer/core/execution_context/navigator_base.cc
+@@ -79,10 +79,27 @@ void NavigatorBase::Trace(Visitor* visitor) const {
+   Supplementable<NavigatorBase>::Trace(visitor);
+ }
+ 
++CORE_EXPORT uint64_t VeloxGetExecutionContextFarblingKey(
++    const ExecutionContext* context,
++    uint64_t domain_salt);
++
+ unsigned int NavigatorBase::hardwareConcurrency() const {
+   unsigned int hardware_concurrency =
+       NavigatorConcurrentHardware::hardwareConcurrency();
+ 
++  if (const ExecutionContext* ctx = GetExecutionContext()) {
++    const uint64_t hw_key =
++        VeloxGetExecutionContextFarblingKey(ctx, 0x4857434F4E435658ULL);
++    if (hardware_concurrency >= 12u) {
++      const unsigned int tiers[4] = {4u, 8u, 12u, hardware_concurrency};
++      hardware_concurrency = tiers[hw_key & 3ULL];
++    } else if (hardware_concurrency >= 8u) {
++      hardware_concurrency = (hw_key & 1ULL) ? 8u : 4u;
++    } else if (hardware_concurrency >= 4u) {
++      hardware_concurrency = (hw_key & 1ULL) ? 4u : 2u;
++    }
++  }
++
+   probe::ApplyHardwareConcurrencyOverride(
+       probe::ToCoreProbeSink(GetExecutionContext()), hardware_concurrency);
+   return hardware_concurrency;
+diff --git a/third_party/blink/renderer/core/html/canvas/canvas_async_blob_creator.cc b/third_party/blink/renderer/core/html/canvas/canvas_async_blob_creator.cc
+index c7c80baf54..1631eb5a19 100644
+--- a/third_party/blink/renderer/core/html/canvas/canvas_async_blob_creator.cc
++++ b/third_party/blink/renderer/core/html/canvas/canvas_async_blob_creator.cc
+@@ -30,6 +30,7 @@
+ #include "third_party/blink/renderer/platform/graphics/unaccelerated_static_bitmap_image.h"
+ #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+ #include "third_party/blink/renderer/platform/image-encoders/image_encoder_utils.h"
++#include "third_party/blink/renderer/platform/privacy_budget/identifiability_digest_helpers.h"
+ #include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
+ #include "third_party/blink/renderer/platform/scheduler/public/thread.h"
+ #include "third_party/blink/renderer/platform/scheduler/public/thread_scheduler.h"
+@@ -40,11 +41,19 @@
+ #include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
+ #include "third_party/blink/renderer/platform/wtf/functional.h"
+ #include "third_party/blink/renderer/platform/wtf/text/base64.h"
++#include "third_party/skia/include/core/SkBitmap.h"
++#include "third_party/skia/include/core/SkImage.h"
+ #include "third_party/skia/include/core/SkSurface.h"
+ #include "third_party/skia/include/encode/SkPngEncoder.h"
+ 
+ namespace blink {
+ 
++PLATFORM_EXPORT void VeloxFarblePixmap(const SkPixmap& pixmap,
++                                       uint64_t domain_key);
++CORE_EXPORT uint64_t VeloxGetExecutionContextFarblingKey(
++    const ExecutionContext* context,
++    uint64_t domain_salt);
++
+ namespace {
+ 
+ // small slack period between deadline and current time for safety
+@@ -219,6 +228,24 @@ CanvasAsyncBlobCreator::CanvasAsyncBlobCreator(
+                            std::min(info.height(), max_dimension));
+         src_data_.reset(info, src_data_.addr(), src_data_.rowBytes());
+       }
++
++      if (context_ &&
++          (src_data_.colorType() == kRGBA_8888_SkColorType ||
++           src_data_.colorType() == kBGRA_8888_SkColorType) &&
++          static_cast<int64_t>(src_data_.width()) *
++                  static_cast<int64_t>(src_data_.height()) >=
++              64) {
++        SkBitmap farbled_bitmap;
++        if (farbled_bitmap.tryAllocPixels(src_data_.info()) &&
++            src_data_.readPixels(farbled_bitmap.pixmap(), 0, 0)) {
++          VeloxFarblePixmap(farbled_bitmap.pixmap(),
++                            VeloxGetExecutionContextFarblingKey(
++                                context_, 0x43414E5641533244ULL));
++          farbled_bitmap.setImmutable();
++          skia_image_ = SkImages::RasterFromBitmap(farbled_bitmap);
++          skia_image_->peekPixels(&src_data_);
++        }
++      }
+     }
+   }
+ 
+diff --git a/third_party/blink/renderer/core/html/canvas/html_canvas_element.cc b/third_party/blink/renderer/core/html/canvas/html_canvas_element.cc
+index cab6547549..cbc7086fc7 100644
+--- a/third_party/blink/renderer/core/html/canvas/html_canvas_element.cc
++++ b/third_party/blink/renderer/core/html/canvas/html_canvas_element.cc
+@@ -1234,6 +1234,11 @@ scoped_refptr<StaticBitmapImage> HTMLCanvasElement::Snapshot(
+   return image_bitmap;
+ }
+ 
++PLATFORM_EXPORT void VeloxSetScopedCanvasFarblingKey(uint64_t key);
++CORE_EXPORT uint64_t VeloxGetExecutionContextFarblingKey(
++    const ExecutionContext* context,
++    uint64_t domain_salt);
++
+ String HTMLCanvasElement::ToDataURLInternal(
+     const String& mime_type,
+     const double& quality,
+@@ -1254,7 +1259,10 @@ String HTMLCanvasElement::ToDataURLInternal(
+     if (!data_buffer)
+       return String("data:,");
+ 
++    VeloxSetScopedCanvasFarblingKey(VeloxGetExecutionContextFarblingKey(
++        GetExecutionContext(), 0x43414E5641533244ULL));
+     String data_url = data_buffer->ToDataURL(encoding_mime_type, quality);
++    VeloxSetScopedCanvasFarblingKey(0);
+     base::TimeDelta elapsed_time = base::TimeTicks::Now() - start_time;
+     float sqrt_pixels =
+         std::sqrt(image_bitmap->width()) * std::sqrt(image_bitmap->height());
+diff --git a/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc b/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc
+index 21d7d9e9fd..dc5eeb8906 100644
+--- a/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc
++++ b/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc
+@@ -78,6 +78,8 @@
+ #include "third_party/blink/renderer/core/css/style_color.h"
+ #include "third_party/blink/renderer/core/dom/document.h"
+ #include "third_party/blink/renderer/core/dom/events/event.h"
++#include "third_party/blink/renderer/core/execution_context/execution_context.h"
++#include "third_party/blink/renderer/platform/privacy_budget/identifiability_digest_helpers.h"
+ #include "third_party/blink/renderer/core/dom/text_link_colors.h"
+ #include "third_party/blink/renderer/core/event_type_names.h"
+ #include "third_party/blink/renderer/core/execution_context/execution_context.h"
+@@ -201,6 +203,14 @@
+ #include "ui/gfx/geometry/vector2d_f.h"
+ #include "v8/include/v8-local-handle.h"
+ 
++namespace blink {
++PLATFORM_EXPORT void VeloxFarblePixmap(const SkPixmap& pixmap,
++                                       uint64_t domain_key);
++CORE_EXPORT uint64_t VeloxGetExecutionContextFarblingKey(
++    const ExecutionContext* context,
++    uint64_t domain_salt);
++}  // namespace blink
++
+ // Including "base/time/time.h" triggers a bug in IWYU.
+ // https://github.com/include-what-you-use/include-what-you-use/issues/1122
+ // IWYU pragma: no_include "base/numerics/clamped_math.h"
+@@ -2969,6 +2979,10 @@ ImageData* BaseRenderingContext2D::getImageDataInternal(
+       SkIRect bounds =
+           snapshot->PaintImageForCurrentFrame().GetSkImageInfo().bounds();
+       DCHECK(!bounds.intersect(SkIRect::MakeXYWH(sx, sy, sw, sh)));
++    } else if (const ExecutionContext* ctx = GetTopExecutionContext()) {
++      VeloxFarblePixmap(
++          image_data_pixmap,
++          VeloxGetExecutionContextFarblingKey(ctx, 0x43414E5641533244ULL));
+     }
+   }
+ 
+diff --git a/third_party/blink/renderer/modules/plugins/dom_plugin_array.cc b/third_party/blink/renderer/modules/plugins/dom_plugin_array.cc
+index 62c7f79961..e28c80febf 100644
+--- a/third_party/blink/renderer/modules/plugins/dom_plugin_array.cc
++++ b/third_party/blink/renderer/modules/plugins/dom_plugin_array.cc
+@@ -34,6 +34,10 @@
+ 
+ namespace blink {
+ 
++CORE_EXPORT uint64_t VeloxGetExecutionContextFarblingKey(
++    const ExecutionContext* context,
++    uint64_t domain_salt);
++
+ DOMPluginArray::DOMPluginArray(LocalDOMWindow* window,
+                                bool should_return_fixed_plugin_data)
+     : ExecutionContextLifecycleObserver(window),
+@@ -140,9 +144,10 @@ PluginData* DOMPluginArray::GetPluginData() const {
+ }
+ 
+ namespace {
+-DOMPlugin* MakeFakePlugin(String plugin_name, LocalDOMWindow* window) {
++DOMPlugin* MakeFakePlugin(String plugin_name,
++                          LocalDOMWindow* window,
++                          String filename = "internal-pdf-viewer") {
+   String description = "Portable Document Format";
+-  String filename = "internal-pdf-viewer";
+   auto* plugin_info =
+       MakeGarbageCollected<PluginInfo>(plugin_name, filename, description,
+                                        /*background_color=*/Color::kTransparent,
+@@ -183,14 +188,36 @@ void DOMPluginArray::UpdatePluginData() {
+   if (should_return_fixed_plugin_data_) {
+     dom_plugins_.clear();
+     if (IsPdfViewerAvailable()) {
+-      // See crbug.com/1164635 and https://github.com/whatwg/html/pull/6738.
+-      // To reduce fingerprinting and make plugins/mimetypes more
+-      // interoperable, this is the spec'd, hard-coded list of plugins:
+-      Vector<String> plugins{"PDF Viewer", "Chrome PDF Viewer",
+-                             "Chromium PDF Viewer", "Microsoft Edge PDF Viewer",
+-                             "WebKit built-in PDF"};
+-      for (auto name : plugins)
+-        dom_plugins_.push_back(MakeFakePlugin(name, DomWindow()));
++      // Keep standard PDF Viewer & Chrome PDF Viewer untouched for full web
++      // compatibility while deterministically farbling secondary fake plugin
++      // metadata per first-party domain (eTLD+1).
++      dom_plugins_.push_back(MakeFakePlugin("PDF Viewer", DomWindow()));
++      dom_plugins_.push_back(MakeFakePlugin("Chrome PDF Viewer", DomWindow()));
++
++      const uint64_t plugin_key = VeloxGetExecutionContextFarblingKey(
++          DomWindow(), 0x504C5547494E5658ULL);
++      char suffix[10];
++      suffix[0] = '-';
++      uint64_t v = plugin_key;
++      for (int i = 1; i <= 8; ++i) {
++        suffix[i] = static_cast<char>('a' + (v % 26ULL));
++        v /= 26ULL;
++      }
++      suffix[9] = '\0';
++      const String farbled_filename =
++          plugin_key ? (String("internal-pdf-viewer") + String(suffix))
++                     : String("internal-pdf-viewer");
++
++      if ((plugin_key & 3ULL) != 0ULL) {
++        dom_plugins_.push_back(
++            MakeFakePlugin("Chromium PDF Viewer", DomWindow()));
++      }
++      if ((plugin_key & 4ULL) != 0ULL) {
++        dom_plugins_.push_back(
++            MakeFakePlugin("Microsoft Edge PDF Viewer", DomWindow()));
++      }
++      dom_plugins_.push_back(MakeFakePlugin("WebKit built-in PDF", DomWindow(),
++                                            farbled_filename));
+     }
+     return;
+   }
+diff --git a/third_party/blink/renderer/modules/webaudio/analyser_node.cc b/third_party/blink/renderer/modules/webaudio/analyser_node.cc
+index 688a2fec77..afd1fb502d 100644
+--- a/third_party/blink/renderer/modules/webaudio/analyser_node.cc
++++ b/third_party/blink/renderer/modules/webaudio/analyser_node.cc
+@@ -26,12 +26,20 @@
+ #include "third_party/blink/renderer/modules/webaudio/analyser_node.h"
+ 
+ #include "third_party/blink/renderer/bindings/modules/v8/v8_analyser_options.h"
++#include "third_party/blink/renderer/core/execution_context/execution_context.h"
+ #include "third_party/blink/renderer/modules/webaudio/analyser_handler.h"
+ #include "third_party/blink/renderer/modules/webaudio/audio_graph_tracer.h"
+ #include "third_party/blink/renderer/modules/webaudio/base_audio_context.h"
++#include "third_party/blink/renderer/platform/privacy_budget/identifiability_digest_helpers.h"
+ 
+ namespace blink {
+ 
++PLATFORM_EXPORT void VeloxFarbleAnalyserFloatSpan(base::span<float> values,
++                                                  uint64_t domain_key);
++CORE_EXPORT uint64_t VeloxGetExecutionContextFarblingKey(
++    const ExecutionContext* context,
++    uint64_t domain_salt);
++
+ AnalyserNode::AnalyserNode(BaseAudioContext& context) : AudioNode(context) {
+   SetHandler(AnalyserHandler::Create(*this, context.sampleRate()));
+ }
+@@ -119,6 +127,11 @@ double AnalyserNode::smoothingTimeConstant() const {
+ void AnalyserNode::getFloatFrequencyData(NotShared<DOMFloat32Array> array) {
+   GetAnalyserHandler().GetFloatFrequencyData(array.Get(),
+                                              context()->currentTime());
++  if (array && GetExecutionContext()) {
++    VeloxFarbleAnalyserFloatSpan(
++        array->AsSpan(), VeloxGetExecutionContextFarblingKey(
++                             GetExecutionContext(), 0x415544494F564C58ULL));
++  }
+ }
+ 
+ void AnalyserNode::getByteFrequencyData(NotShared<DOMUint8Array> array) {
+@@ -128,6 +141,11 @@ void AnalyserNode::getByteFrequencyData(NotShared<DOMUint8Array> array) {
+ 
+ void AnalyserNode::getFloatTimeDomainData(NotShared<DOMFloat32Array> array) {
+   GetAnalyserHandler().GetFloatTimeDomainData(array.Get());
++  if (array && GetExecutionContext()) {
++    VeloxFarbleAnalyserFloatSpan(
++        array->AsSpan(), VeloxGetExecutionContextFarblingKey(
++                             GetExecutionContext(), 0x415544494F564C58ULL));
++  }
+ }
+ 
+ void AnalyserNode::getByteTimeDomainData(NotShared<DOMUint8Array> array) {
+diff --git a/third_party/blink/renderer/modules/webaudio/offline_audio_context.cc b/third_party/blink/renderer/modules/webaudio/offline_audio_context.cc
+index e11ae9deef..e0e1e4a3e3 100644
+--- a/third_party/blink/renderer/modules/webaudio/offline_audio_context.cc
++++ b/third_party/blink/renderer/modules/webaudio/offline_audio_context.cc
+@@ -43,10 +43,18 @@
+ #include "third_party/blink/renderer/platform/bindings/exception_state.h"
+ #include "third_party/blink/renderer/platform/bindings/script_state.h"
+ #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
++#include "third_party/blink/renderer/platform/privacy_budget/identifiability_digest_helpers.h"
+ #include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
+ 
+ namespace blink {
+ 
++PLATFORM_EXPORT void VeloxFarbleAudioSpan(base::span<float> samples,
++                                          unsigned channel_index,
++                                          uint64_t domain_key);
++CORE_EXPORT uint64_t VeloxGetExecutionContextFarblingKey(
++    const ExecutionContext* context,
++    uint64_t domain_salt);
++
+ OfflineAudioContext* OfflineAudioContext::Create(
+     ExecutionContext* context,
+     unsigned number_of_channels,
+@@ -373,6 +381,15 @@ void OfflineAudioContext::FireCompletionEvent() {
+       return;
+     }
+ 
++    const uint64_t audio_key = VeloxGetExecutionContextFarblingKey(
++        GetExecutionContext(), 0x415544494F564C58ULL);
++    for (unsigned ch = 0; ch < rendered_buffer->numberOfChannels(); ++ch) {
++      if (NotShared<DOMFloat32Array> channel =
++              rendered_buffer->getChannelData(ch)) {
++        VeloxFarbleAudioSpan(channel->AsSpan(), ch, audio_key);
++      }
++    }
++
+     // Call the offline rendering completion event listener and resolve the
+     // promise too.
+     DispatchEvent(*OfflineAudioCompletionEvent::Create(rendered_buffer));
+diff --git a/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc b/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc
+index 9392642594..9d4db4b29c 100644
+--- a/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc
++++ b/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc
+@@ -34,7 +34,9 @@
+ #include <utility>
+ 
+ #include "base/bit_cast.h"
++#include "base/compiler_specific.h"
+ #include "base/containers/contains.h"
++#include "base/containers/span.h"
+ #include "base/feature_list.h"
+ #include "base/metrics/histogram_macros.h"
+ #include "base/not_fatal_until.h"
+@@ -176,6 +178,15 @@
+ 
+ namespace blink {
+ 
++PLATFORM_EXPORT void VeloxFarbleRgbaBytes(base::span<uint8_t> rgba_bytes,
++                                          int width,
++                                          int height,
++                                          size_t row_bytes,
++                                          uint64_t domain_key);
++CORE_EXPORT uint64_t VeloxGetExecutionContextFarblingKey(
++    const ExecutionContext* context,
++    uint64_t domain_salt);
++
+ bool WebGLRenderingContextBase::webgl_context_limits_initialized_ = false;
+ unsigned WebGLRenderingContextBase::max_active_webgl_contexts_ = 0;
+ unsigned WebGLRenderingContextBase::max_active_webgl_contexts_on_worker_ = 0;
+@@ -5021,6 +5032,21 @@ void WebGLRenderingContextBase::ReadPixelsHelper(GLint x,
+       return;
+     }
+     ContextGL()->ReadPixels(x, y, width, height, format, type, data);
++    if (format == GL_RGBA && type == GL_UNSIGNED_BYTE && data && width > 0 &&
++        height > 0 &&
++        static_cast<int64_t>(width) * static_cast<int64_t>(height) >= 64 &&
++        Host()) {
++      const size_t byte_len =
++          static_cast<size_t>(width) * static_cast<size_t>(height) * 4u;
++      if (buffer_size.ValueOrDie() >= byte_len) {
++        if (const ExecutionContext* ctx = Host()->GetTopExecutionContext()) {
++          VeloxFarbleRgbaBytes(
++              UNSAFE_TODO(base::span<uint8_t>(data, byte_len)), width, height,
++              static_cast<size_t>(width) * 4u,
++              VeloxGetExecutionContextFarblingKey(ctx, 0x43414E5641533244ULL));
++        }
++      }
++    }
+ 
+     if (IdentifiabilityStudySettings::Get()->ShouldSampleType(
+             IdentifiableSurface::Type::kWebFeature)) {
+diff --git a/third_party/blink/renderer/platform/graphics/image_data_buffer.cc b/third_party/blink/renderer/platform/graphics/image_data_buffer.cc
+index 4918c94167..0c86431d03 100644
+--- a/third_party/blink/renderer/platform/graphics/image_data_buffer.cc
++++ b/third_party/blink/renderer/platform/graphics/image_data_buffer.cc
+@@ -38,9 +38,11 @@
+ #include "base/memory/ptr_util.h"
+ #include "third_party/blink/renderer/platform/graphics/static_bitmap_image.h"
+ #include "third_party/blink/renderer/platform/image-encoders/image_encoder.h"
++#include "third_party/blink/renderer/platform/privacy_budget/identifiability_digest_helpers.h"
+ #include "third_party/blink/renderer/platform/wtf/text/base64.h"
+ #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
+ #include "third_party/blink/renderer/platform/wtf/vector.h"
++#include "third_party/skia/include/core/SkBitmap.h"
+ #include "third_party/skia/include/core/SkImage.h"
+ #include "third_party/skia/include/core/SkSurface.h"
+ #include "third_party/skia/include/core/SkSwizzle.h"
+@@ -140,12 +142,31 @@ bool ImageDataBuffer::EncodeImage(const ImageEncodingMimeType mime_type,
+   return EncodeImageInternal(mime_type, quality, encoded_image, pixmap_);
+ }
+ 
++PLATFORM_EXPORT uint64_t VeloxGetScopedCanvasFarblingKey();
++PLATFORM_EXPORT void VeloxFarblePixmap(const SkPixmap& pixmap,
++                                       uint64_t domain_key);
++
+ bool ImageDataBuffer::EncodeImageInternal(const ImageEncodingMimeType mime_type,
+                                           const double& quality,
+                                           Vector<unsigned char>* encoded_image,
+                                           const SkPixmap& pixmap) const {
+   DCHECK(is_valid_);
+ 
++  SkBitmap farbled_bitmap;
++  const SkPixmap* encode_pixmap = &pixmap;
++  const uint64_t farbling_key = VeloxGetScopedCanvasFarblingKey();
++  if (farbling_key != 0 && pixmap.addr() &&
++      (pixmap.colorType() == kRGBA_8888_SkColorType ||
++       pixmap.colorType() == kBGRA_8888_SkColorType) &&
++      static_cast<int64_t>(pixmap.width()) *
++              static_cast<int64_t>(pixmap.height()) >=
++          64 &&
++      farbled_bitmap.tryAllocPixels(pixmap.info()) &&
++      pixmap.readPixels(farbled_bitmap.pixmap(), 0, 0)) {
++    VeloxFarblePixmap(farbled_bitmap.pixmap(), farbling_key);
++    encode_pixmap = &farbled_bitmap.pixmap();
++  }
++
+   if (mime_type == kMimeTypeJpeg) {
+     SkJpegEncoder::Options options;
+     options.fQuality = ImageEncoder::ComputeJpegQuality(quality);
+@@ -153,19 +174,19 @@ bool ImageDataBuffer::EncodeImageInternal(const ImageEncodingMimeType mime_type,
+     if (options.fQuality == 100) {
+       options.fDownsample = SkJpegEncoder::Downsample::k444;
+     }
+-    return ImageEncoder::Encode(encoded_image, pixmap, options);
++    return ImageEncoder::Encode(encoded_image, *encode_pixmap, options);
+   }
+ 
+   if (mime_type == kMimeTypeWebp) {
+     SkWebpEncoder::Options options = ImageEncoder::ComputeWebpOptions(quality);
+-    return ImageEncoder::Encode(encoded_image, pixmap, options);
++    return ImageEncoder::Encode(encoded_image, *encode_pixmap, options);
+   }
+ 
+   DCHECK_EQ(mime_type, kMimeTypePng);
+   SkPngEncoder::Options options;
+   options.fFilterFlags = SkPngEncoder::FilterFlag::kSub;
+   options.fZLibLevel = 3;
+-  return ImageEncoder::Encode(encoded_image, pixmap, options);
++  return ImageEncoder::Encode(encoded_image, *encode_pixmap, options);
+ }
+ 
+ String ImageDataBuffer::ToDataURL(const ImageEncodingMimeType mime_type,
+diff --git a/third_party/blink/renderer/platform/privacy_budget/identifiability_digest_helpers.cc b/third_party/blink/renderer/platform/privacy_budget/identifiability_digest_helpers.cc
+index 0613a2ddfe..3680226e8d 100644
+--- a/third_party/blink/renderer/platform/privacy_budget/identifiability_digest_helpers.cc
++++ b/third_party/blink/renderer/platform/privacy_budget/identifiability_digest_helpers.cc
+@@ -2,13 +2,27 @@
+ // Use of this source code is governed by a BSD-style license that can be
+ // found in the LICENSE file.
+ 
++#ifdef UNSAFE_BUFFERS_BUILD
++#pragma allow_unsafe_buffers
++#endif
++
+ #include "third_party/blink/renderer/platform/privacy_budget/identifiability_digest_helpers.h"
+ 
++#include <cmath>
++#include <cstdint>
++#include <string>
++
++#include "base/command_line.h"
++#include "base/containers/span.h"
++#include "base/rand_util.h"
++#include "base/strings/string_number_conversions.h"
+ #include "third_party/blink/public/common/privacy_budget/identifiable_token_builder.h"
+ #include "third_party/blink/renderer/platform/wtf/shared_buffer.h"
+ #include "third_party/blink/renderer/platform/wtf/text/case_folding_hash.h"
+ #include "third_party/blink/renderer/platform/wtf/text/string_hash.h"
+ #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
++#include "third_party/skia/include/core/SkImageInfo.h"
++#include "third_party/skia/include/core/SkPixmap.h"
+ 
+ namespace blink {
+ 
+@@ -65,4 +79,158 @@ IdentifiableToken IdentifiabilityBenignStringVectorToken(
+   return builder.GetToken();
+ }
+ 
++namespace {
++
++inline uint64_t VeloxSplitMix64(uint64_t z) {
++  z += 0x9e3779b97f4a7c15ULL;
++  z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
++  z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
++  return z ^ (z >> 31);
++}
++
++inline void TweakGreenByte(uint8_t* pixel) {
++  const uint8_t alpha = pixel[3];
++  if (alpha == 255u) {
++    pixel[1] ^= 1u;
++  } else if (alpha > 0u) {
++    if (pixel[1] > 0u) {
++      pixel[1] -= 1u;
++    } else {
++      pixel[1] = 1u;
++    }
++  }
++}
++
++thread_local uint64_t g_velox_scoped_canvas_farbling_key = 0;
++
++}  // namespace
++
++PLATFORM_EXPORT void VeloxSetScopedCanvasFarblingKey(uint64_t key) {
++  g_velox_scoped_canvas_farbling_key = key;
++}
++
++PLATFORM_EXPORT uint64_t VeloxGetScopedCanvasFarblingKey() {
++  return g_velox_scoped_canvas_farbling_key;
++}
++
++PLATFORM_EXPORT uint64_t VeloxGetSessionFarblingSeed() {
++  static const uint64_t kSeed = []() {
++    uint64_t parsed = 0;
++    if (const base::CommandLine* cmd = base::CommandLine::ForCurrentProcess()) {
++      const std::string val = cmd->GetSwitchValueASCII("velox-farbling-seed");
++      if (!val.empty() && base::StringToUint64(val, &parsed) && parsed != 0) {
++        return parsed;
++      }
++    }
++    uint64_t fallback = base::RandUint64();
++    return fallback ? fallback : 0x6a09e667f3bcc908ULL;
++  }();
++  return kSeed;
++}
++
++PLATFORM_EXPORT uint64_t VeloxDeriveDomainFarblingKey(
++    const String& domain_or_origin,
++    uint64_t domain_salt) {
++  std::string utf8 = domain_or_origin.Utf8();
++  uint64_t h = VeloxSplitMix64(VeloxGetSessionFarblingSeed() ^ domain_salt);
++  for (unsigned char c : utf8) {
++    h = VeloxSplitMix64(h ^ static_cast<uint64_t>(c));
++  }
++  return h ? h : 0xbb67ae8584caa73bULL;
++}
++
++PLATFORM_EXPORT void VeloxFarbleRgbaBytes(base::span<uint8_t> rgba_bytes,
++                                          int width,
++                                          int height,
++                                          size_t row_bytes,
++                                          uint64_t domain_key) {
++  if (domain_key == 0 || width <= 0 || height <= 0 ||
++      static_cast<int64_t>(width) * static_cast<int64_t>(height) < 64) {
++    return;
++  }
++  const size_t min_row_bytes = static_cast<size_t>(width) * 4u;
++  if (row_bytes < min_row_bytes ||
++      rgba_bytes.size() <
++          static_cast<size_t>(height - 1) * row_bytes + min_row_bytes) {
++    return;
++  }
++
++  uint8_t* base_ptr = rgba_bytes.data();
++  bool mutated_any = false;
++  uint8_t* fallback_pixel = nullptr;
++
++  for (int y = 0; y < height; ++y) {
++    uint8_t* row = base_ptr + static_cast<size_t>(y) * row_bytes;
++    for (int x = 0; x < width; ++x) {
++      uint8_t* px = row + static_cast<size_t>(x) * 4u;
++      if (px[3] == 0u) {
++        continue;
++      }
++      fallback_pixel = px;
++      const uint64_t coord =
++          static_cast<uint64_t>(y) * 0x100000001b3ULL + static_cast<uint64_t>(x);
++      if ((VeloxSplitMix64(domain_key ^ coord) & 0x1FULL) == 0ULL) {
++        TweakGreenByte(px);
++        mutated_any = true;
++      }
++    }
++  }
++
++  if (!mutated_any && fallback_pixel) {
++    TweakGreenByte(fallback_pixel);
++  }
++}
++
++PLATFORM_EXPORT void VeloxFarblePixmap(const SkPixmap& pixmap,
++                                       uint64_t domain_key) {
++  if (domain_key == 0 || !pixmap.writable_addr()) {
++    return;
++  }
++  const SkColorType ct = pixmap.colorType();
++  if (ct != kRGBA_8888_SkColorType && ct != kBGRA_8888_SkColorType) {
++    return;
++  }
++  const size_t total_bytes = pixmap.computeByteSize();
++  if (total_bytes == 0) {
++    return;
++  }
++  VeloxFarbleRgbaBytes(
++      base::span<uint8_t>(static_cast<uint8_t*>(pixmap.writable_addr()),
++                          total_bytes),
++      pixmap.width(), pixmap.height(), pixmap.rowBytes(), domain_key);
++}
++
++PLATFORM_EXPORT void VeloxFarbleAudioSpan(base::span<float> samples,
++                                          unsigned channel_index,
++                                          uint64_t domain_key) {
++  if (domain_key == 0 || samples.empty()) {
++    return;
++  }
++  const uint64_t mixed =
++      VeloxSplitMix64(domain_key ^ static_cast<uint64_t>(channel_index));
++  const double factor =
++      1.0 + static_cast<double>((mixed % 4093ULL) + 1ULL) * 1e-6;
++  for (float& sample : samples) {
++    if (sample != 0.0f && std::isfinite(sample)) {
++      sample = static_cast<float>(static_cast<double>(sample) * factor);
++    }
++  }
++}
++
++PLATFORM_EXPORT void VeloxFarbleAnalyserFloatSpan(base::span<float> values,
++                                                  uint64_t domain_key) {
++  if (domain_key == 0 || values.empty()) {
++    return;
++  }
++  for (size_t i = 0; i < values.size(); ++i) {
++    float& v = values[i];
++    if (v != 0.0f && std::isfinite(v)) {
++      const uint64_t h = VeloxSplitMix64(domain_key ^ static_cast<uint64_t>(i));
++      const float delta =
++          static_cast<float>((h % 127ULL) + 1ULL) * 1e-5f;
++      v += delta;
++    }
++  }
++}
++
+ }  // namespace blink

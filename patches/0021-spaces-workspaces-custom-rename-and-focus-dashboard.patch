@@ -2609,21 +2609,50 @@ index d99fabd2ef..cfb9335ad0 100644
  #endif  // BUILDFLAG(IS_CHROMEOS)
      {ui::VKEY_F10, ui::EF_NONE, IDC_FOCUS_MENU_BAR},
 diff --git a/chrome/browser/ui/views/tabs/tab_container_impl.cc b/chrome/browser/ui/views/tabs/tab_container_impl.cc
-index 72d3bec270..6f843f583d 100644
+index 72d3bec270..f847f0697f 100644
 --- a/chrome/browser/ui/views/tabs/tab_container_impl.cc
 +++ b/chrome/browser/ui/views/tabs/tab_container_impl.cc
-@@ -659,6 +659,10 @@ void TabContainerImpl::CancelAnimation() {
-   bounds_animator_.Cancel();
+@@ -143,6 +143,10 @@ void TabContainerImpl::SetAvailableWidthCallback(
+   available_width_callback_ = available_width_callback;
  }
  
 +namespace velox {
 +bool IsTabInActiveWorkspace(const Tab* tab);
 +}  // namespace velox
 +
- void TabContainerImpl::CompleteAnimationAndLayout() {
-   CancelAnimation();
+ Tab* TabContainerImpl::AddTab(std::unique_ptr<Tab> tab,
+                               int model_index,
+                               TabPinned pinned) {
+@@ -155,7 +159,8 @@ Tab* TabContainerImpl::AddTab(std::unique_ptr<Tab> tab,
  
-@@ -666,6 +670,7 @@ void TabContainerImpl::CompleteAnimationAndLayout() {
+   // Don't animate the first tab, it looks weird, and don't animate anything
+   // if the containing window isn't visible yet.
+-  if (GetTabCount() > 1 && GetWidget() && GetWidget()->IsVisible()) {
++  if (GetTabCount() > 1 && GetWidget() && GetWidget()->IsVisible() &&
++      velox::IsTabInActiveWorkspace(tab_ptr)) {
+     StartInsertTabAnimation(model_index);
+   } else {
+     CompleteAnimationAndLayout();
+@@ -222,7 +227,17 @@ void TabContainerImpl::SetActiveTab(std::optional<size_t> prev_active_index,
+ 
+   layout_helper_->SetActiveTab(prev_active_index, new_active_index);
+ 
+-  if (GetActiveTabWidth() == GetInactiveTabWidth()) {
++  bool visibility_mismatch = false;
++  for (int i = 0; i < GetTabCount(); ++i) {
++    const Tab* t = GetTabAtModelIndex(i);
++    if (t && !t->closing() &&
++        t->GetVisible() != velox::IsTabInActiveWorkspace(t)) {
++      visibility_mismatch = true;
++      break;
++    }
++  }
++
++  if (!visibility_mismatch && GetActiveTabWidth() == GetInactiveTabWidth()) {
+     // When tabs are wide enough, selecting a new tab cannot change the
+     // ideal bounds, so only a repaint is necessary.
+     SchedulePaint();
+@@ -666,6 +681,7 @@ void TabContainerImpl::CompleteAnimationAndLayout() {
    SnapToIdealBounds();
  
    SetTabSlotVisibility();
@@ -2631,26 +2660,92 @@ index 72d3bec270..6f843f583d 100644
    SchedulePaint();
  }
  
-@@ -734,10 +739,14 @@ void TabContainerImpl::SetTabSlotVisibility() {
-     // is different than very small non-collapsed tabs, because in that case
-     // the tab (and its favicon) must still be visible.
+@@ -706,43 +722,44 @@ void TabContainerImpl::ExitTabClosingMode() {
+ 
+ void TabContainerImpl::SetTabSlotVisibility() {
+   std::set<tab_groups::TabGroupId> visibility_changed_groups;
+-  bool last_tab_visible = false;
+-  std::optional<tab_groups::TabGroupId> last_tab_group = std::nullopt;
+   std::vector<Tab*> tabs = layout_helper_->GetTabs();
+-  for (Tab* tab : base::Reversed(tabs)) {
+-    std::optional<tab_groups::TabGroupId> current_group = tab->group();
+-    if (current_group != last_tab_group && last_tab_group.has_value()) {
+-      TabGroupViews* group_view = group_views_.at(last_tab_group.value()).get();
+ 
+-      // If we change the visibility of a group header, we must recalculate that
+-      // group's underline bounds.
+-      if (last_tab_visible != group_view->header()->GetVisible()) {
+-        visibility_changed_groups.insert(last_tab_group.value());
++  // 1. Group headers and underlines: visible if and only if the group has at least
++  // one non-closing tab belonging to the active workspace.
++  for (const auto& [group_id, group_view] : group_views_) {
++    bool group_has_visible_tab = false;
++    for (const Tab* tab : tabs) {
++      if (tab->group() == group_id && !tab->closing() &&
++          velox::IsTabInActiveWorkspace(tab)) {
++        group_has_visible_tab = true;
++        break;
+       }
++    }
+ 
+-      group_view->header()->SetVisible(last_tab_visible);
+-      // Hide underlines if they would underline an invisible tab, but don't
+-      // show underlines if they're hidden during a header drag session.
+-      if (!group_view->header()->dragging()) {
+-        group_view->underline()->MaybeSetVisible(last_tab_visible);
+-      }
++    if (group_has_visible_tab != group_view->header()->GetVisible()) {
++      visibility_changed_groups.insert(group_id);
++    }
++
++    group_view->header()->SetVisible(group_has_visible_tab);
++    if (!group_view->header()->dragging()) {
++      group_view->underline()->MaybeSetVisible(group_has_visible_tab);
+     }
+-    last_tab_visible = ShouldTabBeVisible(tab);
+-    last_tab_group = tab->closing() ? std::nullopt : current_group;
++  }
+ 
+-    // Collapsed tabs disappear once they've reached their minimum size. This
+-    // is different than very small non-collapsed tabs, because in that case
+-    // the tab (and its favicon) must still be visible.
++  // 2. Individual tabs: visible if and only if in active workspace and not collapsed.
++  for (Tab* tab : tabs) {
++    std::optional<tab_groups::TabGroupId> current_group = tab->group();
++    const bool in_active_ws = velox::IsTabInActiveWorkspace(tab);
      const bool is_collapsed =
 -        (current_group.has_value() &&
 -         controller_->IsGroupCollapsed(current_group.value()) &&
 -         tab->bounds().width() <= tab->tab_style()->GetTabOverlap());
 -    const bool should_be_visible = is_collapsed ? false : last_tab_visible;
+-
+-    // If we change the visibility of a tab in a group, we must recalculate that
+-    // group's underline bounds.
+-    if (should_be_visible != tab->GetVisible() && tab->group().has_value()) {
+-      visibility_changed_groups.insert(tab->group().value());
 +        ((current_group.has_value() &&
 +          controller_->IsGroupCollapsed(current_group.value())) ||
-+         !velox::IsTabInActiveWorkspace(tab)) &&
++         !in_active_ws) &&
 +        tab->bounds().width() <= tab->tab_style()->GetTabOverlap();
 +    const bool should_be_visible =
-+        (!velox::IsTabInActiveWorkspace(tab) || is_collapsed)
-+            ? false
-+            : last_tab_visible;
++        in_active_ws && !is_collapsed && ShouldTabBeVisible(tab);
++
++    if (should_be_visible != tab->GetVisible() && current_group.has_value()) {
++      visibility_changed_groups.insert(current_group.value());
+     }
  
-     // If we change the visibility of a tab in a group, we must recalculate that
-     // group's underline bounds.
-@@ -1575,6 +1584,9 @@ Tab* TabContainerImpl::FindTabHitByPoint(const gfx::Point& point) {
+     tab->SetVisible(should_be_visible);
+@@ -811,7 +828,8 @@ void TabContainerImpl::PaintChildren(const views::PaintInfo& paint_info) {
+ 
+   std::vector<ZOrderableTabContainerElement> orderable_children;
+   for (views::View* child : children()) {
+-    if (!ZOrderableTabContainerElement::CanOrderView(child)) {
++    if (!child->GetVisible() ||
++        !ZOrderableTabContainerElement::CanOrderView(child)) {
+       continue;
+     }
+     orderable_children.emplace_back(child);
+@@ -1575,6 +1593,9 @@ Tab* TabContainerImpl::FindTabHitByPoint(const gfx::Point& point) {
  }
  
  bool TabContainerImpl::ShouldTabBeVisible(const Tab* tab) const {
@@ -2660,6 +2755,49 @@ index 72d3bec270..6f843f583d 100644
    // When the tabstrip is scrollable, it can grow to accommodate any number of
    // tabs, so tabs can never become clipped.
    // N.B. Tabs can still be not-visible because they're in a collapsed group,
+diff --git a/chrome/browser/ui/views/tabs/tab_strip_layout_helper.cc b/chrome/browser/ui/views/tabs/tab_strip_layout_helper.cc
+index e3e0daac51..b2b91c05ef 100644
+--- a/chrome/browser/ui/views/tabs/tab_strip_layout_helper.cc
++++ b/chrome/browser/ui/views/tabs/tab_strip_layout_helper.cc
+@@ -412,7 +412,38 @@ void TabStripLayoutHelper::UpdateCachedTabWidth(int tab_index,
+   }
+ }
+ 
++namespace velox {
++bool IsTabInActiveWorkspace(const Tab* tab);
++}  // namespace velox
++
+ bool TabStripLayoutHelper::SlotIsCollapsedTab(int i) const {
++  if (i < 0 || i >= static_cast<int>(slots_.size())) {
++    return false;
++  }
++  if (slots_[i].type == ViewType::kTab) {
++    const Tab* tab = static_cast<const Tab*>(slots_[i].view.get());
++    if (!velox::IsTabInActiveWorkspace(tab)) {
++      return true;
++    }
++  } else if (slots_[i].type == ViewType::kGroupHeader &&
++             slots_[i].view->group().has_value()) {
++    const tab_groups::TabGroupId group_id = slots_[i].view->group().value();
++    bool has_tab_in_active_ws = false;
++    for (const auto& slot : slots_) {
++      if (slot.type == ViewType::kTab && slot.view->group() == group_id &&
++          !slot.state.IsClosed()) {
++        const Tab* tab = static_cast<const Tab*>(slot.view.get());
++        if (velox::IsTabInActiveWorkspace(tab)) {
++          has_tab_in_active_ws = true;
++          break;
++        }
++      }
++    }
++    if (!has_tab_in_active_ws) {
++      return true;
++    }
++  }
++
+   // The slot can only be collapsed if it is a tab and in a collapsed group.
+   // If the slot is indeed a tab and in a group, check the collapsed state of
+   // the group to determine if it is collapsed.
 diff --git a/chrome/browser/ui/views/tabs/tab_strip.cc b/chrome/browser/ui/views/tabs/tab_strip.cc
 index 3cc13da526..4b197d14c1 100644
 --- a/chrome/browser/ui/views/tabs/tab_strip.cc

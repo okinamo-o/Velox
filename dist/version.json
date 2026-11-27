@@ -1,30 +1,27 @@
 {
     "product":  "Velox Browser",
-    "version":  "134.0.6998.187",
+    "version":  "134.0.6998.188",
     "channel":  "stable",
-    "release_date":  "2026-11-09T22:37:44Z",
+    "release_date":  "2026-11-27T14:30:21Z",
     "installer":  {
                       "filename":  "VeloxSetup.exe",
-                      "sha256":  "A72862862EEAD38E455898766DAE88C7D20D16E88BC15ECD3F463F6ABB94EE28",
-                      "size_bytes":  143128416,
-                      "download_url":  "https://github.com/okinamo-o/Velox/releases/download/v134.0.6998.187/VeloxSetup.exe",
-                      "signature":  "frOAfVUu8qigeDn6fDOqwxsX8LL3CNXyvEsDvKP/XiZseoHUunip4NrlLbJgeq2nb+1qJE8+ee5gRn8l9AQ8XDuykEJu04bN3t5HQsQK9NoEXwi7pU/aaigAFtxx3T832m7cACgjUQtyQlEiDtmWxVPw0un6Sc+q0AcBi/yL1mfNO6JuBblJaqK354vkuHdMORmWkX+UxBxdmrRn48s7pOx+t/Eicl11jJ+gpnp4Z9UmF5Aqm+y9LBMyVook5QIPJ3lPMdJ+9ODQYWaibqrp2r181X68K7l2VItYz56mXEhK6qbo76DVzVMZjmo8XJvGTJNbtwYC1rRNHnI7Jwd4xw=="
+                      "sha256":  "53F191B578AB143F17C4E8F7375CB90FB81D0E849ED2AA42E1F6ED268F63F36C",
+                      "size_bytes":  143216480,
+                      "download_url":  "https://github.com/okinamo-o/Velox/releases/download/v134.0.6998.188/VeloxSetup.exe",
+                      "signature":  "iCwCoF0dx/WujQzuFlDW4jCm1MYuskJVofva4vAqJVdTAFcqHVDgg/BPyU+JTQzd1tMSPklnZJBzh9E/f0B7DAxCB+z6XuAmbQDYNN6wk7sFJZrlsS0zNfNLqPwIcbBa/mYnnOsKLxXSTn87jDIvGsA3sRI1kJ+tta0PRrhILTwf0IKVTf1+A7fzMgHBTXhWd/M+utR42oIdMC/CaCkFhZT9H3D71c4M/V/M3n2w29C6Yk17A1nrHdukYeNEDL9hyJqlt6ady2bKrd5K/aLCShwv64vYmBOKjq0sXhiXRK92lHUmGtTwmrxUNU5TnEm1Ph4UsO8gtMA6jVdgJTfeVA=="
                   },
     "portable":  {
-                     "filename":  "Velox-v134.0.6998.187-Portable-x64.zip",
-                     "sha256":  "34ED3DB3A0EA90B7BA523D139E86DAB5634EF3A17BB13903F085F1243A9CEF79",
-                     "download_url":  "https://github.com/okinamo-o/Velox/releases/download/v134.0.6998.187/Velox-v134.0.6998.187-Portable-x64.zip"
+                     "filename":  "Velox-v134.0.6998.188-Portable-x64.zip",
+                     "sha256":  "03044AB35003D227828C39D1D9D00EEA04995F5B0E2C098470F8855CB957C368",
+                     "download_url":  "https://github.com/okinamo-o/Velox/releases/download/v134.0.6998.188/Velox-v134.0.6998.188-Portable-x64.zip"
                  },
     "notes":  [
-                  "🔮 Cyber-Glass Tab Context Menu: Midnight glow frame, floating pills, keycap shortcut badges \u0026 crisp action icons",
-                  "🏝️ NTP Tab Islands: Live tab preview capsules with tab counts and favicons",
-                  "🔗 Accurate Most Used Links: Powered by real browsing history and TopSites domain deduplication",
-                  "⚡ Flicker-free split screen with stable view attachment and zero blank flashes",
-                  "🌌 Customizable Spaces (Workspaces): Switch via Ctrl+1/2/3, rename with custom titles and quick preset chips",
-                  "📝 New Tab Scratchpad \u0026 Focus Dashboard: Persistent quick notes, focus timer, RAM \u0026 shield stats",
-                  "🛡️ Velox Shield intelligent tracker \u0026 ad blocking built-in",
-                  "🚀 Ultra hardware-accelerated Blink rendering engine",
-                  "🎨 Modern futuristic glow UI with clean non-client frame",
-                  "🔔 Intelligent dynamic update notifications with one-click restore"
+                  "🛡️ Domain-Keyed Fingerprint Farbling: Per-session, per-eTLD+1 deterministic protection across Canvas, WebGL, WebAudio, plugins \u0026 hardwareConcurrency",
+                  "⚡ Faster Startup \u0026 Session Restore: Batched Spaces TabStrip layout, staggered background favicons, deferred BEST_EFFORT update check \u0026 faster UDP DNS fallback",
+                  "🔐 Google \u0026 Gmail Session Stability: Fixed spurious account sign-outs and hardened NTP Gmail widget auth handling",
+                  "🌌 Spaces \u0026 Auto-Hide Reliability: Fixed new tabs opening in another space, cross-space tab group bleed, and header auto-hide while interacting with widgets",
+                  "🧩 Customizable NTP Widgets Studio: Modular New Tab widgets and cleaner hover tab thumbnail handling without waking background tabs",
+                  "📦 Compact Portable Build: Stripped cached installer archives and stale backup binaries from the Portable ZIP",
+                  "🔔 Cryptographically Signed Auto-Updates: Pinned RSA-2048 release manifest verification with one-click update staging"
               ]
 }

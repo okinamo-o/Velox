@@ -1881,7 +1881,7 @@ index 6e26141616..8e44e54cc4 100644
      <ntp-app></ntp-app>
      <script type="module" src="new_tab_page.js"></script>
 diff --git a/chrome/browser/ui/tabs/tab_strip_model.cc b/chrome/browser/ui/tabs/tab_strip_model.cc
-index cf154ae45c..f892dff816 100644
+index cf154ae45c..9a2a2b5c1e 100644
 --- a/chrome/browser/ui/tabs/tab_strip_model.cc
 +++ b/chrome/browser/ui/tabs/tab_strip_model.cc
 @@ -433,6 +433,13 @@ std::unique_ptr<DetachedTab> TabStripModel::DetachTabImpl(
@@ -2210,7 +2210,15 @@ index cf154ae45c..f892dff816 100644
    }
  
    if (initial_pinned_state != tab->IsPinned()) {
-@@ -3468,80 +3673,36 @@ std::optional<int> TabStripModel::DetermineNewSelectedIndex(
+@@ -3464,84 +3669,74 @@ void TabStripModel::GroupCloseStopped(const tab_groups::TabGroupId& group) {
+   RemoveFromGroup(ungrouping_tabs_indices);
+ }
+ 
++namespace velox {
++int GetTabWorkspaceAtIndex(TabStripModel* model, int tab_index);
++}  // namespace velox
++
+ std::optional<int> TabStripModel::DetermineNewSelectedIndex(
      int removing_index) const {
    DCHECK(ContainsIndex(removing_index));
  
@@ -2221,8 +2229,18 @@ index cf154ae45c..f892dff816 100644
  
 -  if (selection_model().size() > 1) {
 -    return std::nullopt;
--  }
--
++  const int current_ws = velox::GetTabWorkspaceAtIndex(
++      const_cast<TabStripModel*>(this), removing_index);
++
++  // When closing the active tab, select the adjacent tab to the right.
++  // 1. First priority: Closest non-collapsed tab to the right in the same workspace.
++  for (int i = removing_index + 1; i < count(); ++i) {
++    if (velox::GetTabWorkspaceAtIndex(const_cast<TabStripModel*>(this), i) == current_ws &&
++        !IsTabCollapsed(i)) {
++      return GetTabIndexAfterClosing(i, removing_index);
++    }
+   }
+ 
 -  tabs::TabInterface* tab_to_remove_opener = GetOpenerOfTabAt(removing_index);
 -  // First see if the index being removed has any "child" tabs. If it does, we
 -  // want to select the first that child opened, not the next tab opened by the
@@ -2234,8 +2252,14 @@ index cf154ae45c..f892dff816 100644
 -                                                removing_index);
 -  if (index != TabStripModel::kNoTab && !IsTabCollapsed(index)) {
 -    return GetTabIndexAfterClosing(index, removing_index);
--  }
--
++  // 2. Second priority: Closest non-collapsed tab to the left in the same workspace.
++  for (int i = removing_index - 1; i >= 0; --i) {
++    if (velox::GetTabWorkspaceAtIndex(const_cast<TabStripModel*>(this), i) == current_ws &&
++        !IsTabCollapsed(i)) {
++      return i;
++    }
+   }
+ 
 -  if (tab_to_remove_opener && tab_to_remove_opener->GetContents()) {
 -    // If the tab has an opener, shift selection to the next tab with the same
 -    // opener.
@@ -2243,18 +2267,22 @@ index cf154ae45c..f892dff816 100644
 -        tab_to_remove_opener->GetContents(), removing_index);
 -    if (index != TabStripModel::kNoTab && !IsTabCollapsed(index)) {
 -      return GetTabIndexAfterClosing(index, removing_index);
--    }
--
++  // 3. Third priority: Any tab to the right in the same workspace (even if collapsed).
++  for (int i = removing_index + 1; i < count(); ++i) {
++    if (velox::GetTabWorkspaceAtIndex(const_cast<TabStripModel*>(this), i) == current_ws) {
++      return GetTabIndexAfterClosing(i, removing_index);
+     }
++  }
+ 
 -    // If we can't find another tab with the same opener, fall back to the
 -    // opener itself.
 -    index = GetIndexOfTab(tab_to_remove_opener);
 -    if (index != TabStripModel::kNoTab && !IsTabCollapsed(index)) {
 -      return GetTabIndexAfterClosing(index, removing_index);
-+  // VELOX: When closing the active tab, select the adjacent tab to the right.
-+  // Prefer the closest non-collapsed tab to the right.
-+  for (int i = removing_index + 1; i < count(); ++i) {
-+    if (!IsTabCollapsed(i)) {
-+      return GetTabIndexAfterClosing(i, removing_index);
++  // 4. Fourth priority: Any tab to the left in the same workspace (even if collapsed).
++  for (int i = removing_index - 1; i >= 0; --i) {
++    if (velox::GetTabWorkspaceAtIndex(const_cast<TabStripModel*>(this), i) == current_ws) {
++      return i;
      }
    }
  
@@ -2267,14 +2295,17 @@ index cf154ae45c..f892dff816 100644
 -        GetTabGroupForTab(removing_index + 1);
 -    if (current_group == right_group) {
 -      return removing_index;
--    }
--
++  // 5. Fallback if no tabs remain in this workspace (close last tab in workspace):
++  for (int i = removing_index + 1; i < count(); ++i) {
++    if (!IsTabCollapsed(i)) {
++      return GetTabIndexAfterClosing(i, removing_index);
+     }
++  }
+ 
 -    const std::optional<tab_groups::TabGroupId> left_group =
 -        GetTabGroupForTab(removing_index - 1);
 -    if (current_group == left_group) {
 -      return removing_index - 1;
-+  // If there is nothing to the right (or all tabs to the right are collapsed),
-+  // select the closest non-collapsed tab to the left.
 +  for (int i = removing_index - 1; i >= 0; --i) {
 +    if (!IsTabCollapsed(i)) {
 +      return i;
@@ -2288,7 +2319,6 @@ index cf154ae45c..f892dff816 100644
 -      GetNextExpandedActiveTab(removing_index, std::nullopt);
 -  if (next_available.has_value()) {
 -    return GetTabIndexAfterClosing(next_available.value(), removing_index);
-+  // Fallback if all remaining tabs are collapsed:
 +  if (removing_index < count() - 1) {
 +    return removing_index;
    }

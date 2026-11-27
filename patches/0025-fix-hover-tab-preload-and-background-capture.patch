@@ -1,0 +1,107 @@
+diff --git a/chrome/browser/ui/thumbnails/thumbnail_tab_helper.cc b/chrome/browser/ui/thumbnails/thumbnail_tab_helper.cc
+index 4e09640b01..d086e43778 100644
+--- a/chrome/browser/ui/thumbnails/thumbnail_tab_helper.cc
++++ b/chrome/browser/ui/thumbnails/thumbnail_tab_helper.cc
+@@ -190,10 +190,11 @@ class ThumbnailTabHelper::TabStateTracker
+ 
+   // ThumbnailImage::Delegate:
+   void ThumbnailImageBeingObservedChanged(bool is_being_observed) override {
+-    capture_driver_.UpdateThumbnailVisibility(is_being_observed);
+-    // Do not attempt to reload discarded tabs for thumbnail observation events.
+-    if (is_being_observed && !web_contents()->WasDiscarded()) {
+-      web_contents()->GetController().LoadIfNecessary();
++    // VELOX: Never load unloaded/restored tabs or wake background renderers
++    // when a tab hover card observes a thumbnail image. Only pre-captured
++    // thumbnails (e.g. from CaptureThumbnailOnTabBackgrounded) are displayed.
++    if (!is_being_observed) {
++      capture_driver_.UpdateThumbnailVisibility(false);
+     }
+   }
+ 
+diff --git a/chrome/browser/ui/views/tabs/tab_hover_card_bubble_view.cc b/chrome/browser/ui/views/tabs/tab_hover_card_bubble_view.cc
+index 6128377290..f375f630fc 100644
+--- a/chrome/browser/ui/views/tabs/tab_hover_card_bubble_view.cc
++++ b/chrome/browser/ui/views/tabs/tab_hover_card_bubble_view.cc
+@@ -455,15 +455,10 @@ TabHoverCardBubbleView::TabHoverCardBubbleView(Tab* tab,
+ 
+   GetBubbleFrameView()->SetCornerRadius(corner_radius_);
+ 
+-  // Placeholder image should be used when there is no image data for the
+-  // given tab. Otherwise don't flash the placeholder while we wait for the
+-  // existing thumbnail to be decompressed.
+-  //
+-  // Note that this code has to go after CreateBubble() above, since setting up
+-  // the placeholder image and background color require a ColorProvider, which
+-  // is only available once this View has been added to its widget.
+-  if (thumbnail_view_ && !tab->HasThumbnail() && !tab->IsActive()) {
+-    thumbnail_view_->SetPlaceholderImage();
++  // VELOX: Do not show a waiting/placeholder box for tabs without a cached
++  // thumbnail, since hovering no longer captures or loads background tabs.
++  if (thumbnail_view_ && !tab->HasThumbnail()) {
++    thumbnail_view_->ClearImage();
+   }
+ 
+   // Start in the fully "faded-in" position so that whatever text we initially
+@@ -509,9 +504,10 @@ TabHoverCardBubbleView::GetCollaborationMessagingData(
+ }
+ 
+ void TabHoverCardBubbleView::UpdateCardContent(const Tab* tab) {
+-  // Preview image is never visible for the active tab.
++  // Preview image is never visible for the active tab or for tabs without a
++  // cached thumbnail (hovering never wakes/loads background tabs).
+   if (thumbnail_view_) {
+-    if (tab->IsActive() || (tab->IsDiscarded() && !tab->HasThumbnail())) {
++    if (tab->IsActive() || !tab->HasThumbnail()) {
+       thumbnail_view_->ClearImage();
+     } else {
+       thumbnail_view_->SetWaitingForImage();
+diff --git a/chrome/browser/ui/views/tabs/tab_hover_card_controller.cc b/chrome/browser/ui/views/tabs/tab_hover_card_controller.cc
+index 083b725bf9..17be31bc5e 100644
+--- a/chrome/browser/ui/views/tabs/tab_hover_card_controller.cc
++++ b/chrome/browser/ui/views/tabs/tab_hover_card_controller.cc
+@@ -557,18 +557,15 @@ void TabHoverCardController::MaybeStartThumbnailObservation(
+     return;
+   }
+ 
+-  // Discarded tabs that don't already have a thumbnail won't get one.
+-  if (tab->IsDiscarded() && !tab->HasThumbnail()) {
++  // VELOX: Never trigger tab loading or background capture for tabs without an
++  // already-cached thumbnail.
++  if (!tab->HasThumbnail()) {
+     thumbnail_observer_->Observe(nullptr);
++    thumbnail_wait_state_ = ThumbnailWaitState::kNotWaiting;
+     return;
+   }
+ 
+   auto thumbnail = tab->data().thumbnail;
+-  if (!thumbnail) {
+-    hover_card_->SetPlaceholderImage();
+-    thumbnail_wait_state_ = ThumbnailWaitState::kNotWaiting;
+-    return;
+-  }
+ 
+   if (thumbnail == thumbnail_observer_->current_image()) {
+     return;
+@@ -674,7 +671,8 @@ void TabHoverCardController::StartThumbnailObservation(Tab* tab) {
+   }
+ 
+   auto thumbnail = tab->data().thumbnail;
+-  if (!thumbnail || thumbnail == thumbnail_observer_->current_image()) {
++  if (!thumbnail || !thumbnail->has_data() ||
++      thumbnail == thumbnail_observer_->current_image()) {
+     return;
+   }
+ 
+diff --git a/chrome/browser/ui/views/tabs/tab_hover_card_controller_unittest.cc b/chrome/browser/ui/views/tabs/tab_hover_card_controller_unittest.cc
+index 212b24b4ae..b2b79fffcc 100644
+--- a/chrome/browser/ui/views/tabs/tab_hover_card_controller_unittest.cc
++++ b/chrome/browser/ui/views/tabs/tab_hover_card_controller_unittest.cc
+@@ -207,7 +207,7 @@ TEST_F(TabHoverCardControllerTest, DontCaptureUnderCriticalMemoryPressure) {
+ 
+   EXPECT_EQ(controller->thumbnail_observer_.get()->current_image(), nullptr);
+   EXPECT_EQ(controller->thumbnail_wait_state_,
+-            TabHoverCardController::kWaitingWithPlaceholder);
++            TabHoverCardController::kNotWaiting);
+ }
+ 
+ class TabHoverCardPreviewsEnabledPrefTest : public TestWithBrowserView {
